@@ -1,0 +1,16 @@
+# Environnement du moteur (PyTorch, ~1 Go) et dépôt tiers avec poids : réinstaller via le README
+.venv-engine/
+third_party/
+
+# Journaux et caches locaux
+.engine-logs/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Audio et exports (ne jamais publier de rushes)
+exports/
+*.wav
+!tests/fixtures/*.wav
+*.npy
+*.npz

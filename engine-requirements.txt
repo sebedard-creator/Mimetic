@@ -1,0 +1,11 @@
+# Environnement isolé du moteur Rec-RIR (.venv-engine), testé le 2026-09-16 sur Windows 10, Python 3.11.9.
+# Installation :
+#   py -3.11 -m venv .venv-engine
+#   .venv-engine\Scripts\python.exe -m pip install --no-cache-dir torch==2.14.0 --index-url https://download.pytorch.org/whl/cpu
+#   .venv-engine\Scripts\python.exe -m pip install --no-cache-dir -r engine-requirements.txt
+#   git clone https://github.com/Audio-WestlakeU/Rec-RIR.git third_party/Rec-RIR
+#   git -C third_party/Rec-RIR checkout b3ac6fc1421bd58e017022037feb14f30366b46f
+# Ni mamba-ssm, ni causal-conv1d, ni torchaudio : voir docs/decisions.md (D5).
+numpy==2.2.6
+scipy==1.13.1
+soundfile==0.12.1

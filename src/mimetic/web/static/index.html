@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mimetic beta</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">MIMETIC <span class="badge beta">BETA</span></div>
+  <div class="muted small">Reverb de tournage → ADR, 100 % wet</div>
+</header>
+
+<main>
+  <div id="engineMissing" class="notice warn hidden">
+    <strong>Moteur d'analyse non installé</strong> <span id="engineDetail"></span> : la reverb ne peut pas être estimée.
+  </div>
+
+  <section class="files">
+    <div class="file-card" data-slot="source">
+      <div class="file-head"><span class="step-no">1</span><div><h2>SOURCE</h2><p class="muted small">Dialogue de tournage : sert à analyser la pièce</p></div></div>
+      <div class="drop">
+        <input type="file" accept=".wav,audio/wav" hidden>
+        <span class="drop-text">Déposer un WAV ou <u>choisir</u></span>
+      </div>
+      <div class="asset-info"></div>
+      <label class="channel hidden">Canal
+        <select><option value="left">Gauche</option><option value="right">Droite</option><option value="mean">Moyenne mono</option></select>
+      </label>
+      <canvas class="wave hidden" height="56"></canvas>
+      <button class="btn small-btn listen hidden">▶ Écouter</button>
+    </div>
+
+    <div class="file-card" data-slot="destination">
+      <div class="file-head"><span class="step-no">2</span><div><h2>DESTINATION</h2><p class="muted small">Voix ADR sèche : reçoit la reverb</p></div></div>
+      <div class="drop">
+        <input type="file" accept=".wav,audio/wav" hidden>
+        <span class="drop-text">Déposer un WAV ou <u>choisir</u></span>
+      </div>
+      <div class="asset-info"></div>
+      <label class="channel hidden">Canal
+        <select><option value="left">Gauche</option><option value="right">Droite</option><option value="mean">Moyenne mono</option></select>
+      </label>
+      <canvas class="wave hidden" height="56"></canvas>
+    </div>
+  </section>
+
+  <section id="status" class="status hidden">
+    <div class="status-row">
+      <div class="spinner" aria-hidden="true"></div>
+      <div id="statusText">…</div>
+      <span class="spacer"></span>
+      <button id="cancel" class="btn">Annuler</button>
+      <button id="retry" class="btn hidden">Relancer</button>
+    </div>
+    <div id="statusSub" class="muted small"></div>
+  </section>
+
+  <div id="errorBar" class="notice err hidden" role="alert"></div>
+
+  <section id="result" class="card hidden">
+    <div class="result-head">
+      <h2><span class="step-no">3</span> Reverb</h2>
+      <span id="staleBadge" class="badge stale hidden">RECALCUL…</span>
+      <span class="spacer"></span>
+      <div id="roomSummary" class="small"></div>
+    </div>
+
+    <canvas id="resultWave" class="wave big" height="130"></canvas>
+    <div class="legend small muted"><span class="sw dry"></span>Destination <span class="sw wet"></span>Reverb</div>
+
+    <div class="transport">
+      <button id="play" class="btn play">▶</button>
+      <div class="seg" role="radiogroup">
+        <label><input type="radio" name="source" value="dry"> Destination</label>
+        <label><input type="radio" name="source" value="wet"> Reverb seule</label>
+        <label><input type="radio" name="source" value="mix" checked> Destination + reverb</label>
+      </div>
+      <span id="pos" class="mono small">0.000 s</span>
+    </div>
+
+    <div class="controls">
+      <label>Niveau de reverb <output id="gainOut">0.0 dB</output>
+        <input id="wetGain" type="range" min="-30" max="12" step="0.5" value="0"></label>
+      <label>Délai supplémentaire <output id="delayOut">0 ms</output>
+        <input id="predelay" type="range" min="0" max="200" step="1" value="0"></label>
+      <label>Volume d'écoute <output id="monOut">-6.0 dB</output>
+        <input id="monitor" type="range" min="-40" max="6" step="0.5" value="-6"></label>
+    </div>
+
+    <div class="export-row">
+      <button id="export" class="btn primary">Exporter la reverb (WAV 32 bits flottants)</button>
+      <label class="small"><input type="checkbox" id="exportIr"> + IR wet</label>
+    </div>
+    <div id="exportInfo" class="small"></div>
+
+    <div id="chips" class="chips"></div>
+    <p class="hint">Placer <code>…_ADR_REVERB.wav</code> sur une piste parallèle, calé exactement au début du fichier DESTINATION. Le volume d'écoute n'affecte pas l'export.</p>
+  </section>
+
+  <details class="card tech">
+    <summary>Détails techniques</summary>
+    <canvas id="profileEnv" class="wave" height="90"></canvas>
+    <pre id="techDump"></pre>
+  </details>
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
