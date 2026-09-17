@@ -2,6 +2,16 @@
 .venv-engine/
 third_party/
 
+# Configuration d'outils de développement (Claude Code, éditeurs), sans rôle dans le programme
+.claude/
+.vscode/
+.idea/
+
+# Fichiers système
+Thumbs.db
+desktop.ini
+.DS_Store
+
 # Journaux et caches locaux
 .engine-logs/
 __pycache__/

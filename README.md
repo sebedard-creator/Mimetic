@@ -1,10 +1,10 @@
 # Mimetic (beta)
 
+Chameleon-like direct-sound IR analysis and regeneration for ADR recordings.
+
 **Match production-dialogue reverb onto ADR.** Mimetic listens to a production recording, estimates the room it was recorded in, and renders a **100 % wet reverb stem** for a dry ADR line, ready to sit on a parallel track in your DAW.
 
 It runs locally as a small Python web service: open the page from any computer on your LAN. No audio leaves the host machine.
-
-Chameleon-like direct-sound IR analysis and regeneration for ADR recordings.
 
 ![Mimetic main page](docs/images/screenshot.png)
 
