@@ -4,9 +4,9 @@
 
 It runs locally as a small Python web service: open the page from any computer on your LAN. No audio leaves the host machine.
 
-![Mimetic main page](docs/images/screenshot.png)
+Chameleon-like direct-sound IR analysis and regeneration for ADR recordings.
 
-*Screenshot made with synthetic test material (text-to-speech voice and a simulated room).*
+![Mimetic main page](docs/images/screenshot.png)
 
 ## How it works
 
@@ -128,9 +128,11 @@ src/mimetic/
   cli.py        command-line tools (manual reverb / known IR, no analysis)
 tests/          unit and integration tests
 benchmarks/     synthetic evaluation scripts for the engine and HF extension
-docs/           evaluation, decisions, validation, French README
+docs/           evaluation, decisions, validation, screenshot
 ```
 
 ---
 
-**Note: the application's user interface and most of the documentation are in French.** An earlier French version of this README is available in [docs/README.fr.md](docs/README.fr.md).
+**Note: the application's user interface and most of the documentation are in French.**
+
+Conçu par Sébastien Bédard
