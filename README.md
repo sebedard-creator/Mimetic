@@ -131,6 +131,12 @@ benchmarks/     synthetic evaluation scripts for the engine and HF extension
 docs/           evaluation, decisions, validation, screenshot
 ```
 
+## License
+
+Mimetic is released under the [MIT License](LICENSE).
+
+The analysis engine relies on third-party components that are **not** included in this repository and keep their own licences, notably [Rec-RIR](https://github.com/Audio-WestlakeU/Rec-RIR) (MIT) and [PyTorch](https://github.com/pytorch/pytorch/blob/main/LICENSE) (BSD-style), installed separately as described above.
+
 ---
 
 **Note: the application's user interface and most of the documentation are in French.**
