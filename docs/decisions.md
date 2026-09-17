@@ -92,6 +92,24 @@ Marquage `HF_SYNTHESIZED` dans la page et le rapport JSON (`render_ir.synthesize
 
 Réserve méthodologique : la forme f² de la décroissance est un choix physique a priori, mais le passage du niveau en dB/kHz a été choisi **après** avoir vu 3 des 6 pièces du pilote, lui-même synthétique. Ce n'est pas une validation indépendante.
 
+## D10 — 2026-09-17 — Installation autonome dans le dossier du projet
+
+**Architecture §6.1** : caches dans le dossier local de données de l'application (`%LOCALAPPDATA%`).
+
+**Décision** (demande de l'utilisateur, qui gère ses services depuis un disque de projets) : tout vit sous la racine du projet et rien n'est écrit ailleurs.
+
+| Élément | Emplacement |
+|---|---|
+| Environnement de l'application | `.venv/` (`requirements.txt`) |
+| Environnement du moteur | `.venv-engine/` (`engine-requirements.txt`) |
+| Code et poids Rec-RIR | `third_party/Rec-RIR/` (commit épinglé) |
+| Imports, jobs, exports | `data/` (`--data-dir`, `--export-dir` pour en changer) |
+| Journaux service et worker | `.engine-logs/` |
+
+`setup.cmd` recrée l'ensemble, `run.cmd` lance le service. Le dossier reste déplaçable : tous les chemins sont résolus depuis la racine du projet.
+
+Seule dépendance extérieure : l'interpréteur Python 3.11 de la machine, dont les venvs héritent (fonctionnement normal d'un venv). Les paquets, eux, sont installés dans le projet, avec `--no-cache-dir` pour éviter le cache pip du profil utilisateur.
+
 ## D4 — 2026-09-16 — Zéros exacts dans la convolution
 
 `oaconvolve` (FFT) laisse un bruit ~1e-17 avant la première réflexion. Les zéros initiaux de l'ADR et de l'IR sont retirés avant convolution, puis le résultat est replacé à son indice : zéros exacts, même longueur `N+M-1`.

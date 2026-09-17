@@ -34,6 +34,7 @@ def main() -> None:
     app = create_app(args.data_dir, args.export_dir)
     print(f"Mimetic beta — données : {args.data_dir or default_data_dir()}")
     print(f"Exports : {app.state.project.export_dir}")
+    print(f"Journaux : {default_data_dir().parent / '.engine-logs'}")
     print(f"  http://localhost:{args.port}")
     if args.host == "0.0.0.0":
         for ip in lan_addresses():

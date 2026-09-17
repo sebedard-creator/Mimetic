@@ -1,8 +1,29 @@
-# Environnement du moteur (PyTorch, ~1 Go) et dépôt tiers avec poids : réinstaller via le README
+# --- Tout ce qui est installé ou produit localement, à recréer avec setup.cmd ---
+
+# Environnements Python du projet (application et moteur d'analyse)
+.venv/
 .venv-engine/
+venv/
+env/
+
+# Code et poids du moteur Rec-RIR (dépôt tiers, ~48 Mo) : recloné par setup.cmd
 third_party/
 
-# Configuration d'outils de développement (Claude Code, éditeurs), sans rôle dans le programme
+# Données de travail, exports et journaux du service
+data/
+.engine-logs/
+exports/
+
+# Caches Python et outils
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+
+# Configuration d'outils de développement, sans rôle dans le programme
 .claude/
 .vscode/
 .idea/
@@ -12,15 +33,8 @@ Thumbs.db
 desktop.ini
 .DS_Store
 
-# Journaux et caches locaux
-.engine-logs/
-__pycache__/
-*.pyc
-.pytest_cache/
-
-# Audio et exports (ne jamais publier de rushes)
-exports/
+# Audio et tableaux : ne jamais publier de rushes ni de résultats de banc
 *.wav
-!tests/fixtures/*.wav
 *.npy
 *.npz
+!tests/fixtures/*.wav

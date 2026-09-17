@@ -1,0 +1,14 @@
+# Dépendances de l'application (environnement .venv du projet), testées sur Python 3.11.9 / Windows 10.
+# Installation :
+#   py -3.11 -m venv .venv
+#   .venv\Scripts\python.exe -m pip install --no-cache-dir -r requirements.txt
+# Le moteur d'analyse a son propre environnement : voir engine-requirements.txt.
+numpy==2.2.6
+scipy==1.13.1
+soundfile==0.12.1
+fastapi==0.111.0
+uvicorn==0.30.1
+
+# Tests (optionnel)
+pytest==9.1.1
+httpx==0.28.1

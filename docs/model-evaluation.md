@@ -98,10 +98,14 @@ Estimation Rec-RIR dans les bandes 1–7 kHz : très proche de la vérité (RT60
 
 Version précédente écartée (`hybrid-hf-v1`, pentes en octaves) : niveaux +4,6 à +10,6 dB trop forts, RT60 ×1,1 à ×4,7.
 
+## Usage réel
+
+2026-09-17 : premier essai sur du dialogue de tournage réel par l'auteur, résultat jugé satisfaisant à l'écoute. Aucune mesure ni comparaison en aveugle ; ce retour n'est pas une validation chiffrée.
+
 ## Ce que ce pilote ne prouve pas
 
-- Qualité sur **dialogue de tournage réel**, en français, avec vraies pièces, bruit de plateau, perche en mouvement.
-- Qualité **perceptive** : aucune écoute formelle réalisée.
+- Qualité **mesurée** sur dialogue de tournage réel : vraies pièces, bruit de plateau, perche en mouvement, voix et langues variées.
+- Qualité **perceptive** : aucune écoute formelle ni comparaison en aveugle.
 - Robustesse à des IR réelles plus complexes que le modèle synthétique utilisé (proche des données de simulation typiques de l'entraînement, ce qui peut flatter le résultat).
 - Justesse des aigus synthétisés sur de vraies pièces : l'extension est jugée contre un modèle d'absorption synthétique, et son réglage de niveau a été choisi en voyant une partie de ce pilote.
 

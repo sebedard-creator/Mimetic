@@ -18,7 +18,8 @@
   - destination pleine bande → reverb pleine bande ;
   - mise en page mobile et bureau.
 - **Piège de test relevé** : une DESTINATION sans aigus (ex. synthèse vocale 16 kHz) donne une reverb sans aigus, extension ou non.
-- **Toujours pas fait** : dialogue de tournage réel, écoute, DAW, accès depuis un autre poste.
+- **2026-09-17** : premier essai sur dialogue de tournage réel par l'auteur, résultat jugé satisfaisant à l'écoute (retour informel, sans mesure).
+- **Toujours pas fait** : mesures sur dialogue réel, écoute formelle en aveugle, test DAW documenté, accès depuis un autre poste.
 
 ---
 

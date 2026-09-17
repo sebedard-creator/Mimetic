@@ -36,8 +36,8 @@ SLOTS = ("source", "destination")
 
 
 def default_data_dir() -> Path:
-    base = os.environ.get("LOCALAPPDATA") or str(Path.home() / ".local" / "share")
-    return Path(base) / "Mimetic" / "beta"
+    """Tout dans le dossier du projet : l'installation est autonome et déplaçable (décision D10)."""
+    return recrir.PROJECT_ROOT / "data"
 
 
 class Project:
