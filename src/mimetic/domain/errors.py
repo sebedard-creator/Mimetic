@@ -18,6 +18,7 @@ MESSAGES_FR = {
     "REFERENCE_INCONSISTENT": "La sélection de référence paraît hétérogène.",
     "MIX_OVER_0DBFS": "Le pic dépasse 0 dBFS (conservé en flottant, aucun limiteur).",
     "CANCELLED": "Analyse annulée.",
+    "EQ_REQUIRED": "Le clip traité demande le Match EQ actif.",
     "STALE_RESULT":"Le résultat est obsolète : relancez le rendu.",
     "NO_PROFILE": "Aucun profil de reverb utilisable.",
     "NO_ADR": "Aucun ADR importé.",

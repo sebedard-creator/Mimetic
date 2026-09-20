@@ -1,5 +1,39 @@
 # Validation — beta 0.1.0b1
 
+## Mise à jour 2026-09-20 — Match EQ, exports et robustesse au bruit
+
+`.venv\Scripts\python.exe -m pytest -q` : **53 passés, 1 sauté** (équivalence Mamba, exécutée dans `.venv-engine`).
+
+### Ce qui a été ajouté depuis la dernière mise à jour
+
+| Fonction | Statut | Où sont les mesures |
+|---|---|---|
+| Match EQ (raccord de timbre), actif par défaut | livré, expérimental | [eq-validation.md](eq-validation.md) |
+| Trois exports : `_IR_ONLY`, `_EQ_IR_MIX`, `_IR_PROFILE`, téléchargés au clic | livré | tests d'intégration |
+| Analyse robuste au bruit de plateau (lots A1/A2) | livré | [eq-validation.md](eq-validation.md) |
+| Bouton « Nouveau duo », lecteurs par fenêtre, durée conseillée de la source | livré | tests d'intégration |
+| Calage automatique du dosage de reverb | **retiré après mesure** | [eq-validation.md](eq-validation.md) |
+
+### Tests bloquants ajoutés
+
+- **Bypass exact** : Match EQ désactivé ou à 0 % → tableaux identiques à l'octet près au chemin historique.
+- **Routage** : `dry + wet` vaut exactement `a·q*(ADR*(δ+h_eff))` à 1e-6 ; le filtre est appliqué une seule fois, le gain de compensation est commun aux deux branches.
+- **Filtre** : courbe connue réalisée à ≤ 0,25 dB, intensité 50 % = moitié en dB, 0 % = identité exacte, énergie concentrée au début (phase minimale).
+- **Oracle EQ** : courbe connue retrouvée à ≤ 1,5 dB RMS ; un simple écart de niveau ne déplace pas la forme.
+- **Confiance** : baisser le rapport signal/bruit doit réduire la correction et la confiance, continûment, sans falaise ni refus surprise ; un fond instable réduit la correction ; tout inexploitable → refus explicite.
+- **Fond sonore** : une queue de réverbération n'est jamais comptée comme du bruit ; silence numérique traité comme fond négligeable, pas comme fond inconnu ; le rapport signal/bruit peut être négatif.
+- **Flux web** : l'EQ arrive sans action de l'utilisateur ; l'activer ou la désactiver ne relance pas Rec-RIR ; le clip traité exige le Match EQ (`EQ_REQUIRED`) ; « Nouveau duo » vide les deux fenêtres sans toucher aux exports, et une source seule ne déclenche rien.
+
+### Vérifié à la main sur le service réel
+
+Analyse automatique dès le second fichier, annulation propre, calage des réglages, téléchargement des trois exports, obsolescence après changement de source, lecture des deux fichiers importés pendant une analyse, et affichage correct sur mobile et bureau.
+
+### Toujours pas fait
+
+Écoute en aveugle, essai dans un DAW documenté, mesures sur de vrais couples production/ADR, accès depuis un autre poste du réseau.
+
+---
+
 ## Mise à jour 2026-09-16 (2) — page unique + aigus hybrides
 
 - `python -m pytest -q` : **31 passés, 1 sauté** (test Mamba, passé dans `.venv-engine`).

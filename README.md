@@ -16,10 +16,12 @@ It runs locally as a small Python web service: open the page from any computer o
 
 ## Highlights
 
-- **Two files in, one stem out.** Drop the production take and the ADR take; the reverb stem is computed automatically.
-- **Wet only, never the voice.** The export contains reflections and tail only — no trace of the production dialogue's words or noise.
+- **Two files in, finished stems out.** Drop the production take and the ADR take; room analysis, tone matching and rendering all run automatically.
+- **Room *and* tone.** Beyond the reverb, Match EQ aligns the ADR's colour — mic, proximity, presence — with the production recording.
+- **Wet only, never the voice.** The reverb export contains reflections and tail only — no trace of the production dialogue's words or noise.
 - **Sample-accurate placement.** The stem starts exactly where the ADR file starts, so it lines up by simply aligning the file heads.
 - **Honest about itself.** Estimated values, warnings and limitations are shown in the page and written to a JSON report next to every export.
+- **Noise-aware.** Plateau background is measured away from speech and its decay, then discounted: the tone match no longer copies the boom's hiss, and confidence degrades smoothly instead of falling off a cliff.
 - **Full-band output.** The estimator works up to 8 kHz; above that, the highs are reconstructed and clearly flagged as synthesised.
 - **No cloud, no account, no phone-home.** Local inference on CPU. No GPU required.
 - **Self-contained.** Virtual environments, model weights, working files, exports and logs all live inside the project folder.
@@ -28,29 +30,50 @@ It runs locally as a small Python web service: open the page from any computer o
 
 1. **SOURCE** — drop the production dialogue. It is used only to analyse the room; its audio never reaches the output.
 2. **DESTINATION** — drop the dry ADR line. It receives the reverb and is never altered.
-3. **Automatic processing** — the analysis picks up to three 6-second passages among the most active parts of the source (about 30 s of CPU time each, cancellable), then renders the stem in a few seconds.
-4. **Audition** — Destination / Reverb only / Destination + reverb, with a shared playhead and a monitoring level that does not affect the export.
-5. **Adjust** — reverb level in dB and extra pre-delay; both re-render on the fly.
-6. **Export** — `yourfile_ADR_REVERB.wav` plus its JSON report.
+3. **Automatic processing** — room analysis (up to three 6-second passages among the most active parts of the source, about 30 s of CPU time each, cancellable), then tone matching, then the render. Every step is cancellable and nothing needs a second click.
+4. **Audition** — original ADR / processed ADR / reverb only / full mix, with a shared playhead, plus separate players for the two imported files. The monitoring level never affects the export.
+5. **Adjust** — reverb level, extra pre-delay and Match EQ strength; each re-renders on the fly.
+6. **Export** — one click per deliverable; the WAV downloads immediately and stays in the project's `data/exports`.
 
 Changing the destination or a setting re-renders only. Changing the source re-runs the analysis.
 
+**Nouveau duo** (*new pair*), next to the status line, empties both slots so you can chain another couple without the analysis firing on a half-replaced pair. Exports and settings are kept.
+
+**Delete Cache** (top right) resets everything after a confirmation dialog: imported files, current room profile, rendered stem, working files **and the exported files** in `data/exports`. Your own source files on disk are never touched.
+
 ### What you get
 
-| File | Contents |
-|---|---|
-| `…_ADR_REVERB.wav` | 32-bit float, destination sample rate, mono, wet only, complete tail (`N + M − 1` samples), no normalisation, no limiter |
-| `…_ADR_REVERB.json` | Estimated RT60 and DRR, analysed passages, engine revision and weights hash, render settings, peak levels, warnings |
-| `…_PROFILE_WET_IR.wav` *(optional)* | The wet impulse response itself, for use in a convolution reverb — disable auto-normalisation there |
+Three buttons, three deliverables. All are 32-bit float at the destination's sample rate, mono, with no normalisation and no limiter. Clicking a button downloads the WAV right away and keeps a copy in the project's `data/exports`.
 
-In the DAW: put the stem on a track parallel to the ADR, aligned to the same start. Keep the ADR dry and untouched; blend with the stem's fader.
+| Button | File | In the DAW |
+|---|---|---|
+| **IR_ONLY** | `…_IR_ONLY.wav` — reverb only, complete tail (`N + M − 1` samples) | Parallel track **next to** the original ADR |
+| **EQ_IR_MIX** | `…_EQ_IR_MIX.wav` — tone-matched voice + reverb in one file | **Replaces** the original ADR — do not stack both |
+| **IR_PROFILE** | `…_IR_PROFILE.wav` — the wet impulse response itself | Load in a convolution reverb; disable its auto-normalisation |
+
+Each WAV comes with a JSON report: estimated RT60 and DRR, analysed passages, engine revision and weights hash, render and EQ settings, the EQ curve, peak levels and warnings. Audio files align to the exact start of the destination file.
+
+### Match EQ
+
+Room tone is only half of a match: an ADR booth and a boom on set do not sound alike even in the same room. Match EQ aligns the ADR's **colour** — mic, proximity, presence — with the production recording. It is **on by default** and computed right after the room analysis, with no second click.
+
+It compares speech spectra between the source and the *already reverberated* ADR, so the correction accounts for the reverb about to be added instead of correcting it twice, then applies one causal minimum-phase FIR to the ADR before rendering. A common gain keeps the ADR at its original speech level, and both branches stay coherent: `dry + wet` always equals the filtered mix.
+
+- **Strength** adjustable from 0 to 100 %; turning Match EQ off restores the previous render bit for bit.
+- **Bounded** to −9/+6 dB, tightened only when the measurement itself is unstable — **never** because an ADR line is short, since short lines are the norm.
+- **Honest about its floor**: with different sentences on each side, roughly 1 dB RMS of the curve is content bias rather than a real mic difference. A 4–6 dB difference sits well above that; a 1 dB one does not.
+- **Never silent about failure**: without enough usable dialogue the page says so with figures, and the reverb is still rendered.
+- **Noisy references are handled explicitly**: background is estimated away from speech *and its decay*, subtracted from the statistics, and each band carries an absolute confidence that shrinks the correction where the noise dominates. On a 96-case bench the EQ error drops from 1.46 to 1.28 dB at 20 dB SNR and from 2.18 to 1.87 dB under moving background noise, with no regression on clean material.
+
+Measurements, tuning and what is **not** proven (no listening test, no measured real production/ADR pair): [docs/eq-validation.md](docs/eq-validation.md).
 
 ### Getting the best out of it
 
 - Feed the **driest possible ADR**: any reverb already on it will be convolved a second time.
 - Give the source **5–20 s of representative dialogue**, pauses and word tails included; the analysis needs the decay, not just the words.
 - Prefer a source recorded **in one spot**: a single profile describes one microphone/actor position, not a whole location.
-- If the result feels shy, raise the reverb level — the estimator tends to run slightly conservative (see below).
+- If the result feels shy, raise the reverb level — the estimator tends to run conservative, and its exact dosage is not measurable automatically (see below).
+- **Lay a room-tone bed from the production track.** A dry ADR sits in digital silence between words while the boom carries a continuous background; that gap reads as "too clean" even when reverb and tone match. Mimetic does not fabricate ambience.
 
 ## Requirements
 
@@ -109,6 +132,7 @@ WAV, 16/24-bit PCM or 32-bit float, 44.1 or 48 kHz, mono or two channels, up to 
 | **Passage selection** | Up to three non-overlapping 6-second windows, ranked by signal activity; per-window RT60 and DRR are compared and the most representative one (medoid) is kept, never an average of impulse responses. |
 | **Direct / reverb split** | The estimated IR is time-aligned on the direct arrival, the direct packet is removed, and the remaining reflections are scaled relative to it — so your ADR stays at 0 dB and the wet stem carries the right amount of room. |
 | **High frequencies** | The estimator runs at 16 kHz, so it knows nothing above 8 kHz. A hybrid extension synthesises the bands above 7.8 kHz from the measured 5–7 kHz reflection envelope, with an air-absorption-shaped decay (1/RT = a + b·f²), bounded so the highs are never brighter or longer than the measured band. |
+| **Speech statistics** | Three temporal classes — speech, decay, background — so a reverb tail is never counted as noise. Each band gets an absolute confidence (signal-to-noise of speech alone, background stability, statistical support) that is never renormalised away. |
 | **Render** | Full linear convolution, exact acoustic zeros before the first reflection, no normalisation and no hidden limiter. Peaks above 0 dBFS are preserved in float and reported. |
 
 ## Status and limitations
@@ -116,14 +140,16 @@ WAV, 16/24-bit PCM or 32-bit float, 44.1 or 48 kHz, mono or two channels, up to 
 Mimetic is a **beta**, and deliberately explicit about what it knows:
 
 - **Highs above 7.8 kHz are synthesised, not measured.** On a synthetic full-band pilot, median level error was 1.5–2.3 dB; very absorptive rooms come out darker than reality.
-- **The reverb tends to be about 1.5 dB quiet** (median bias over 18 synthetic cases). The level slider is there for that.
+- **The reverb dosage is not calibrated automatically.** The estimator runs conservative (about 1.5 dB quiet over 18 synthetic cases, and audibly drier than a real boom on the one real pair measured). Two automatic calibrations were built, measured against known truth, and **removed** because they followed speech rhythm instead of reverb: see [docs/eq-validation.md](docs/eq-validation.md). Use the level slider.
+- **No room tone.** Ambience is out of scope; take it from the production track.
 - **Tail limited to about 1 s.** Longer decays are truncated and flagged in the page and the report.
 - **A destination with no high-frequency content yields a reverb with none either.**
 - **Mono only.** True stereo would need a different model and routing.
 - **No authentication.** Anyone on the network can use the page and download the exports: trusted LAN only.
-- No EQ matching of the dry voice, no de-reverberation of the ADR, no batch mode, no plug-in version.
+- **No listening test yet.** Everything measured so far is spectral and mostly synthetic; no blind comparison, no measured real production/ADR pair.
+- No de-reverberation of the ADR, no batch mode, no plug-in version.
 
-Measured results, methods and open questions: [docs/model-evaluation.md](docs/model-evaluation.md) · [docs/validation.md](docs/validation.md) · [docs/decisions.md](docs/decisions.md). The full design document, [architecture.md](architecture.md), is in French.
+Measured results, methods and open questions: [docs/model-evaluation.md](docs/model-evaluation.md) · [docs/eq-validation.md](docs/eq-validation.md) · [docs/validation.md](docs/validation.md) · [docs/decisions.md](docs/decisions.md). The design documents — [architecture.md](architecture.md), [docs/architecture-match-eq.md](docs/architecture-match-eq.md) and [docs/architecture-references-difficiles.md](docs/architecture-references-difficiles.md) — are in French.
 
 ## Development
 
@@ -131,7 +157,7 @@ Measured results, methods and open questions: [docs/model-evaluation.md](docs/mo
 .venv\Scripts\python.exe -m pytest -q
 ```
 
-The suite covers the audio invariants (direct removal, gain linearity, timing, convolution accuracy, IR resampling, export round-trip), the automatic workflow, and the HF extension.
+53 tests, one skipped (the Mamba equivalence check needs PyTorch, so it runs in `.venv-engine`). They cover the audio invariants (direct removal, gain linearity, timing, convolution accuracy, IR resampling, export round-trip), the automatic workflow and its invalidation rules, the HF extension, the EQ filter and routing, and the noise-robust statistics.
 
 Command-line tools, for rendering with a manual reverb or a known IR without the web page:
 
@@ -139,18 +165,29 @@ Command-line tools, for rendering with a manual reverb or a known IR without the
 .venv\Scripts\python.exe -m mimetic.cli manual ADR.wav --rt60 0.8 --drr 6 --out exports
 ```
 
-Benchmarks (they need dry 16 kHz speech files) live in [benchmarks/](benchmarks/); commands and results are in [docs/model-evaluation.md](docs/model-evaluation.md).
+Benchmarks need dry 16 kHz speech files and print a table each:
+
+| Script | Question it answers |
+|---|---|
+| `recrir_synthetic.py` + `recrir_evaluate.py` | How close are the estimated RT60 and DRR to known rooms? |
+| `recrir_fullband.py` + `hybrid_evaluate.py` | Do the synthesised highs match a room with known absorption? |
+| `eq_phoneme_bias.py` | How much EQ does a *different text* invent on its own? |
+| `eq_noise_bench.py` | How does the tone match hold up against plateau noise? |
+
+Results: [docs/model-evaluation.md](docs/model-evaluation.md) and [docs/eq-validation.md](docs/eq-validation.md).
 
 ```text
 src/mimetic/
-  audio/        WAV I/O, DSP (direct/wet split, convolution, IR resampling), hybrid HF extension
+  audio/        WAV I/O, DSP (direct/wet split, convolution, IR resampling),
+                hybrid HF extension, EQ filter design
+  analysis/     speech statistics, noise-aware confidence, EQ curve estimation
   engines/      recrir/ (worker, CPU Mamba port, adapter), known_ir, parametric_manual
   web/          FastAPI service and the single-page UI
   pipeline.py   render and export, shared by the web service and the CLI
   cli.py        command-line tools
 tests/          unit and integration tests
-benchmarks/     synthetic evaluation scripts for the engine and the HF extension
-docs/           evaluation, decisions, validation, screenshot
+benchmarks/     evaluation scripts for the engine, the HF extension and the tone match
+docs/           evaluation, decisions, validation, design documents, screenshot
 ```
 
 ## Credits

@@ -73,11 +73,21 @@ async function upload(slot, file) {
 
 function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 
-function fmtAsset(a) {
+function durationVerdict(s) {
+  // Fenêtre d'analyse : 6 s, jusqu'à 3 passages (voir engines/recrir/adapter.py).
+  if (s < 2) return '<span class="warn-text">trop court pour l\'analyse</span>';
+  if (s < 4) return '<span class="warn-text">très court</span>';
+  if (s < 10) return "1 passage analysé";
+  if (s <= 20) return '<span class="dur-ok">durée idéale</span>';
+  return "3 passages analysés au maximum";
+}
+
+function fmtAsset(a, slot) {
   const peak = a.peak > 0 ? (20 * Math.log10(a.peak)).toFixed(1) + " dBFS" : "silence";
   const clip = a.clipping_suspected ? ' · <span class="warn-text">écrêtage suspecté</span>' : "";
+  const dur = slot === "source" ? " · " + durationVerdict(a.duration_seconds) : "";
   return `<b>${esc(a.name)}</b><br>${(a.sample_rate_hz / 1000).toFixed(1)} kHz · ${a.channels === 1 ? "mono" : "stéréo"} · ` +
-    `${a.duration_seconds.toFixed(2)} s · pic ${peak}${clip}`;
+    `${a.duration_seconds.toFixed(2)} s · pic ${peak}${clip}${dur}`;
 }
 
 function renderFiles() {
@@ -86,7 +96,7 @@ function renderFiles() {
     card.classList.toggle("loaded", !!a);
     $(".drop-text", card).innerHTML = uploading[slot] ? `Envoi de ${esc(uploading[slot])}…`
       : a ? "Remplacer le fichier" : "Déposer un WAV ou <u>choisir</u>";
-    $(".asset-info", card).innerHTML = a ? fmtAsset(a) : "";
+    $(".asset-info", card).innerHTML = a ? fmtAsset(a, slot) : "";
     $(".channel", card).classList.toggle("hidden", !a || a.channels === 1);
     if (a && a.channels > 1) $("select", card).value = a.channel_mode;
     $(".wave", card).classList.toggle("hidden", !a);
@@ -176,9 +186,49 @@ function renderStatus() {
   $("#statusSub").textContent = sub;
   $("#cancel").classList.toggle("hidden", !running);
   $("#retry").classList.toggle("hidden", !(job.state === "failed" || job.state === "cancelled"));
+  $("#newPair").classList.toggle("hidden", running);
 }
+$("#newPair").addEventListener("click", async () => {
+  showError(null);
+  stopPlayback();
+  player.pcm = {}; player.bufs = {}; player.key = null;
+  for (const k of Object.keys(fileBuffers)) delete fileBuffers[k];
+  for (const k of Object.keys(waves)) delete waves[k];
+  try { await applyState(await api("POST", "/api/session/new")); }
+  catch (e) { showError(e); refresh().catch(() => {}); }
+});
 $("#cancel").addEventListener("click", () => send(api("POST", "/api/cancel")));
 $("#retry").addEventListener("click", () => { showError(null); send(api("POST", "/api/retry")); });
+
+// ---------------------------------------------------------------- Vider le cache
+function fmtBytes(n) {
+  if (!n) return "";
+  return n >= 1024 * 1024 ? `(${(n / 1024 / 1024).toFixed(1)} Mo)` : `(${Math.round(n / 1024)} ko)`;
+}
+
+$("#clearCache").addEventListener("click", () => {
+  $("#cacheSize").textContent = fmtBytes(S && S.cache_bytes);
+  $("#cacheExportDir").textContent = (S && S.export_dir) || "";
+  const e = (S && S.exports) || { count: 0, bytes: 0 };
+  $("#exportCount").textContent = e.count === 0 ? "Aucun fichier exporté pour l'instant"
+    : e.count === 1 ? `1 fichier exporté ${fmtBytes(e.bytes)}` : `${e.count} fichiers exportés ${fmtBytes(e.bytes)}`;
+  $("#cacheDialog").showModal();
+});
+$("#cacheCancel").addEventListener("click", () => $("#cacheDialog").close());
+$("#cacheConfirm").addEventListener("click", async () => {
+  $("#cacheDialog").close();
+  stopPlayback();
+  player.pcm = {}; player.bufs = {}; player.key = null; player.srcKey = null; player.srcBuf = null;
+  for (const k of Object.keys(waves)) delete waves[k];
+  showError(null);
+  try {
+    const st = await api("POST", "/api/cache/clear");
+    await applyState(st);
+    const exp = st.deleted_exports ? `, dont ${st.deleted_exports} fichier(s) exporté(s)` : "";
+    $("#statusText").textContent = `Cache vidé ${fmtBytes(st.freed_bytes)}${exp}`.trim() + ".";
+    $("#status").classList.remove("hidden");
+  } catch (e) { showError(e); refresh().catch(() => {}); }
+});
 
 let pollTimer = null;
 function schedulePoll() {
@@ -196,6 +246,9 @@ const CHIPS = {
   REFERENCE_INCONSISTENT: ["Passages analysés incohérents : source hétérogène ?", true],
   MIX_OVER_0DBFS: ["Pic > 0 dBFS (conservé, pas de limiteur)", true],
   GAIN_UNCALIBRATED: ["Niveau non calibré exactement", true],
+  EQ_ROOM_CONTEXT_UNCERTAIN: ["Match EQ : aigus de la reverb synthétiques, raccord moins sûr au-dessus de 7,8 kHz", true],
+  EQ_LOW_CONFIDENCE: ["Match EQ : peu de dialogue exploitable, correction prudente", true],
+  EQ_CORRECTION_LIMITED: ["Match EQ : correction limitée par les bornes de sécurité", true],
 };
 
 function renderResult() {
@@ -212,7 +265,7 @@ function renderResult() {
   const chips = [["Analyse expérimentale (Rec-RIR)", false], ...r.warnings.map(w => CHIPS[w] || [w, true])];
   $("#chips").innerHTML = chips.map(([t, w]) => `<span class="chip${w ? " w" : ""}">${esc(t)}</span>`).join("");
   if (S.last_export) {
-    $("#exportInfo").innerHTML = `Exporté dans <code>${esc(S.last_export.directory)}</code> — télécharger : ` +
+    $("#exportInfo").innerHTML = `Téléchargé, et conservé dans <code>${esc(S.last_export.directory)}</code> : ` +
       Object.values(S.last_export.files).map(n => `<a href="/api/exports/${encodeURIComponent(n)}" download>${esc(n)}</a>`).join(" · ");
   } else $("#exportInfo").textContent = "";
 }
@@ -228,7 +281,90 @@ function onSetting() {
 }
 $("#wetGain").addEventListener("input", onSetting);
 $("#predelay").addEventListener("input", onSetting);
-$("#export").addEventListener("click", () => send(api("POST", "/api/export", { export_ir: $("#exportIr").checked })));
+// Téléchargement du WAV dès l'export : le fichier reste aussi dans le dossier d'exports du service.
+function downloadExported(st) {
+  const files = st.last_export && st.last_export.files;
+  if (!files) return;
+  const wav = Object.entries(files).find(([k]) => k.endsWith("_wav"));
+  if (!wav) return;
+  const a = document.createElement("a");
+  a.href = `/api/exports/${encodeURIComponent(wav[1])}`;
+  a.download = wav[1];
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+async function runExport(mode) {
+  showError(null);
+  const st = await api("POST", "/api/export", { mode });
+  await applyState(st);
+  downloadExported(st);
+  return st;
+}
+
+$("#export").addEventListener("click", () => runExport("wet").catch(e => { showError(e); refresh().catch(() => {}); }));
+$("#exportIrProfile").addEventListener("click", () => runExport("ir_profile").catch(e => { showError(e); refresh().catch(() => {}); }));
+// Le clip traité inclut toujours le raccord de timbre : au besoin on active Match EQ et on attend.
+$("#exportMatched").addEventListener("click", async () => {
+  showError(null);
+  try {
+    if (!S.eq.enabled) {
+      $("#eqEnabled").checked = true;
+      await applyState(await api("POST", "/api/eq/settings", { enabled: true, amount: Number($("#eqAmount").value) / 100 }));
+    }
+    for (let i = 0; i < 300 && (S.eq.state === "pending" || (S.render && S.render.stale) || S.job.state === "running"); i++) {
+      $("#statusText").textContent = "Préparation du clip traité…";
+      await new Promise(r => setTimeout(r, 500));
+      await refresh();
+    }
+    if (S.eq.state !== "ready") { renderEq(); return; }
+    await runExport("matched");
+  } catch (e) { showError(e); refresh().catch(() => {}); }
+});
+
+// ---------------------------------------------------------------- Match EQ
+const EQ_ERRORS = {
+  EQ_INSUFFICIENT_SPEECH: "pas assez de dialogue exploitable des deux côtés",
+  EQ_NO_RELIABLE_BANDS: "trop peu de bandes fiables pour une correction",
+  EQ_FILTER_FIT_FAILED: "filtre irréalisable dans les tolérances",
+  EQ_REFERENCE_CONTAMINATED: "source trop contaminée (musique, autre voix ?)",
+};
+
+function sendEq() {
+  return send(api("POST", "/api/eq/settings", {
+    enabled: $("#eqEnabled").checked, amount: Number($("#eqAmount").value) / 100,
+  }));
+}
+$("#eqEnabled").addEventListener("change", sendEq);
+let eqTimer = null;
+$("#eqAmount").addEventListener("input", () => {
+  $("#eqAmountOut").textContent = $("#eqAmount").value + " %";
+  clearTimeout(eqTimer);
+  eqTimer = setTimeout(sendEq, 350);
+});
+
+function renderEq() {
+  const eq = S.eq;
+  $("#eqEnabled").checked = eq.enabled;
+  $("#eqAmountWrap").classList.toggle("hidden", !eq.enabled || eq.state !== "ready");
+  $("#origOpt").classList.toggle("hidden", !(S.render && S.render.eq_applied));
+  const el = $("#eqState");
+  el.className = "small";
+  if (!eq.enabled) { el.textContent = "Désactivé : l'ADR n'est pas modifié, seule la reverb est calculée."; el.classList.add("muted"); return; }
+  if (eq.state === "pending") { el.textContent = "Analyse du timbre…"; el.classList.add("eq-busy"); return; }
+  if (eq.state === "failed") {
+    el.textContent = "Match EQ indisponible : " + (EQ_ERRORS[eq.error.code] || eq.error.message)
+      + (eq.error.detail ? ` — ${eq.error.detail}` : "") + ". La reverb reste calculée sans correction.";
+    el.classList.add("eq-fail");
+    return;
+  }
+  const c = eq.curve || {};
+  const gain = eq.applied_common_gain_db;
+  el.innerHTML = `<span class="eq-ready">Correction active</span> · écart de niveau retiré ${(c.level_offset_db || 0).toFixed(1)} dB` +
+    (gain == null ? "" : ` · gain de compensation ${gain.toFixed(1)} dB`) +
+    (c.saturated_fraction > 0.15 ? ' · <span class="eq-fail">correction limitée par les bornes</span>' : "");
+}
 
 // ---------------------------------------------------------------- Écoute
 const player = { ctx: null, gain: null, pcm: {}, bufs: {}, key: null, src: null, kind: null, startedAt: 0, pos: 0 };
@@ -262,7 +398,7 @@ function toBuffer(p) {
   return b;
 }
 
-function isResultKind(k) { return k === "dry" || k === "wet" || k === "mix"; }
+function isResultKind(k) { return k === "dry" || k === "wet" || k === "mix" || k === "original"; }
 function currentPos() { return player.src && player.ctx ? player.ctx.currentTime - player.startedAt : player.pos; }
 
 function stopPlayback() {
@@ -275,7 +411,7 @@ function stopPlayback() {
   }
   player.kind = null;
   $("#play").textContent = "▶";
-  const l = $(".file-card[data-slot=source] .listen"); if (l) l.textContent = "▶ Écouter";
+  $$(".file-card .listen").forEach(b => { b.textContent = "▶ Écouter"; });
 }
 
 function startResult(kind) {
@@ -299,11 +435,13 @@ async function loadResultBuffers() {
   if (!S.render || S.render.stale || player.key === S.render.dependency_key) return;
   const wasPlaying = player.src && isResultKind(player.kind);
   const pos = currentPos();
-  const [dry, wet] = await Promise.all([loadPcm("dry"), loadPcm("wet")]);
+  const needOriginal = !!S.render.eq_applied;
+  const [dry, wet, original] = await Promise.all([loadPcm("dry"), loadPcm("wet"),
+    needOriginal ? loadPcm("original") : Promise.resolve(null)]);
   const mix = { fs: dry.fs, data: new Float32Array(dry.data.length) };
   for (let i = 0; i < mix.data.length; i++) mix.data[i] = dry.data[i] + wet.data[i];
-  stopPlayback();
-  player.pcm = { dry, wet, mix };
+  if (isResultKind(player.kind)) stopPlayback();  // l'arrivée d'un rendu ne coupe pas l'écoute d'un import
+  player.pcm = original ? { dry, wet, mix, original } : { dry, wet, mix };
   player.bufs = {};
   player.key = S.render.dependency_key;
   player.pos = Math.min(pos, dry.data.length / dry.fs);
@@ -326,21 +464,31 @@ $("#resultWave").addEventListener("click", e => {
   if (player.src && isResultKind(player.kind)) startResult(player.kind); else drawResult();
 });
 
-const sourceListen = $(".file-card[data-slot=source] .listen");
-sourceListen.addEventListener("click", async () => {
-  if (player.kind === "source") { stopPlayback(); return; }
-  try {
-    const key = S.source.id + S.source.channel_mode;
-    if (player.srcKey !== key) { player.srcPcm = await loadPcm("source"); player.srcKey = key; player.srcBuf = null; }
-    const ctx = audioCtx();
-    if (!player.srcBuf) player.srcBuf = toBuffer(player.srcPcm);
-    stopPlayback();
-    const src = ctx.createBufferSource();
-    src.buffer = player.srcBuf; src.connect(player.gain); src.start();
-    player.src = src; player.kind = "source";
-    src.onended = () => { if (player.src === src) stopPlayback(); };
-    sourceListen.textContent = "■ Arrêter";
-  } catch (e) { showError(e); }
+// Écoute des fichiers importés : un transport par fenêtre, indépendant de celui du résultat.
+const fileBuffers = {};
+$$(".file-card .listen").forEach(btn => {
+  const slot = btn.closest(".file-card").dataset.slot;
+  btn.addEventListener("click", async () => {
+    if (player.kind === slot) { stopPlayback(); return; }
+    try {
+      const a = S[slot];
+      if (!a) return;
+      const key = a.id + a.channel_mode;
+      const cached = fileBuffers[slot];
+      if (!cached || cached.key !== key) fileBuffers[slot] = { key, pcm: await loadPcm(slot), buf: null };
+      const ctx = audioCtx();
+      const entry = fileBuffers[slot];
+      if (!entry.buf) entry.buf = toBuffer(entry.pcm);
+      stopPlayback();
+      const src = ctx.createBufferSource();
+      src.buffer = entry.buf;
+      src.connect(player.gain);
+      src.start();
+      player.src = src; player.kind = slot;
+      src.onended = () => { if (player.src === src) stopPlayback(); };
+      btn.textContent = "■ Arrêter";
+    } catch (e) { showError(e); }
+  });
 });
 
 function drawResult() {
@@ -382,6 +530,8 @@ async function applyState(st) {
     $("#predelay").value = S.settings.additional_predelay_ms;
     $("#gainOut").textContent = Number(S.settings.wet_gain_db).toFixed(1) + " dB";
     $("#delayOut").textContent = Math.round(S.settings.additional_predelay_ms) + " ms";
+    $("#eqAmount").value = Math.round((S.eq.amount ?? 1) * 100);
+    $("#eqAmountOut").textContent = $("#eqAmount").value + " %";
   }
   $("#engineMissing").classList.toggle("hidden", !!S.engine.available);
   $("#engineDetail").textContent = S.engine.detail ? `(${S.engine.detail})` : "";
@@ -390,11 +540,17 @@ async function applyState(st) {
   try { await ensureWave("source"); await ensureWave("destination"); } catch (e) { showError(e); }
   renderStatus();
   renderResult();
+  renderEq();
   if (S.last_error) showError(S.last_error);
   else if (S.job.state === "running") showError(null);
 
   if (S.render && !S.render.stale) { try { await loadResultBuffers(); } catch (e) { showError(e); } }
-  if (!S.render) { stopPlayback(); player.pcm = {}; player.key = null; }
+  if (!S.render) {
+    // Ne jamais interrompre l'écoute d'un fichier importé : la page se rafraîchit toutes les 0,8 s
+    // pendant l'analyse, seul le transport du résultat est concerné.
+    if (isResultKind(player.kind)) stopPlayback();
+    player.pcm = {}; player.key = null;
+  }
 
   const dump = { ...S };
   if (dump.profile) dump.profile = { ...dump.profile, envelope_db: "…" };

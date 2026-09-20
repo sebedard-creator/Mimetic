@@ -119,3 +119,17 @@ class RenderResult:
     warnings: list[str]
     dependency_key: str
     ir_info: dict | None = None  # détail de l'IR de rendu (bandes synthétisées)
+    eq_info: dict | None = None  # filtre de raccord appliqué (None = aucun)
+    original: np.ndarray | None = field(default=None, repr=False)  # ADR non corrigé, paddé
+
+
+@dataclass(frozen=True)
+class EqSettings:
+    """Réglages du Match EQ (architecture-match-eq §9.1).
+
+    Actif par défaut : le raccord de timbre fait partie du traitement attendu, il est calculé dans
+    la foulée de l'analyse de pièce. Le décocher restitue exactement le rendu sans correction.
+    """
+    enabled: bool = True
+    amount: float = 1.0
+    preserve_adr_level: bool = True

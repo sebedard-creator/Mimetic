@@ -61,7 +61,11 @@ def main(argv: list[str] | None = None) -> int:
                                              direct_index=idx, direct_length=args.direct_length)
         settings = RenderSettings(args.gain_db, args.predelay_ms / 1000.0)
         result = pipeline.render(adr, args.channel, profile, settings)
-        out = pipeline.export(result, adr, args.channel, profile, settings, Path(args.out), args.export_ir)
+        out = pipeline.export(result, adr, args.channel, profile, settings, Path(args.out))
+        if args.export_ir:
+            ir_out = pipeline.export(result, adr, args.channel, profile, settings, Path(args.out),
+                                     mode="ir_profile")
+            out["files"] = {**out["files"], **ir_out["files"]}
     except MimeticError as exc:
         print(str(exc), file=sys.stderr)
         return 2

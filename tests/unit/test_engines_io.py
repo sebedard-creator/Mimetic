@@ -201,9 +201,11 @@ def test_end_to_end_export_roundtrip_preserves_over_unity(tmp_path):
     r = pipeline.render(adr, "mono", profile, settings)
     assert r.wet.size == x.size + 1900 - 1
     assert "MIX_OVER_0DBFS" in r.warnings
-    out = pipeline.export(r, adr, "mono", profile, settings, tmp_path / "exp", export_ir=True)
+    out = pipeline.export(r, adr, "mono", profile, settings, tmp_path / "exp")
+    ir = pipeline.export(r, adr, "mono", profile, settings, tmp_path / "exp", mode="ir_profile")
+    assert ir["files"]["ir_profile_wav"] == "ADR é 01_IR_PROFILE.wav"
     wav = tmp_path / "exp" / out["files"]["wet_wav"]
-    assert wav.name == "ADR é 01_ADR_REVERB.wav"
+    assert wav.name == "ADR é 01_IR_ONLY.wav"
     back, fs = sf.read(str(wav), dtype="float64")
     assert fs == FS and back.size == r.wet.size
     np.testing.assert_allclose(back, r.wet, atol=1e-6)
@@ -212,7 +214,7 @@ def test_end_to_end_export_roundtrip_preserves_over_unity(tmp_path):
     assert rep["output"]["length_frames"] == r.wet.size
     # pas d'écrasement
     out2 = pipeline.export(r, adr, "mono", profile, settings, tmp_path / "exp")
-    assert out2["files"]["wet_wav"] == "ADR é 01_ADR_REVERB_2.wav"
+    assert out2["files"]["wet_wav"] == "ADR é 01_IR_ONLY_2.wav"
 
 
 def test_render_with_ir_at_other_rate(tmp_path):

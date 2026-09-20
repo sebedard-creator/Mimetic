@@ -27,12 +27,29 @@ from starlette.concurrency import run_in_threadpool
 from mimetic import DSP_VERSION, __version__, pipeline
 from mimetic.audio import io
 from mimetic.domain.errors import MimeticError
-from mimetic.domain.models import MAX_FILE_SECONDS, AudioAsset, RenderResult, RenderSettings, RoomProfile
+from mimetic.analysis import eq_match
+from mimetic.domain.models import (
+    MAX_FILE_SECONDS,
+    AudioAsset,
+    EqSettings,
+    RenderResult,
+    RenderSettings,
+    RoomProfile,
+)
 from mimetic.engines.recrir import adapter as recrir
 
 STATIC_DIR = Path(__file__).parent / "static"
 MAX_UPLOAD_BYTES = 256 * 1024**2
 SLOTS = ("source", "destination")
+
+
+class NoCacheStatic(StaticFiles):
+    """Interface toujours relue : sans ça, un navigateur garde l'ancien CSS/JS après une mise à jour."""
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-store, must-revalidate"
+        return response
 
 
 def default_data_dir() -> Path:
@@ -56,6 +73,11 @@ class Project:
         self.assets: dict[str, AudioAsset | None] = {s: None for s in SLOTS}
         self.channels: dict[str, str] = {s: "mono" for s in SLOTS}
         self.settings = RenderSettings()
+        self.eq = EqSettings()
+        self.eq_profile: dict | None = None
+        self.eq_deps: tuple | None = None
+        self.eq_error: dict | None = None
+        self.eq_error_deps: tuple | None = None
         self.profile: RoomProfile | None = None
         self.profile_deps: tuple | None = None
         self.render: RenderResult | None = None
@@ -65,6 +87,28 @@ class Project:
         self.last_error: dict | None = None
         self.worker_thread: threading.Thread | None = None
         self.cancel_requested = False
+
+    def clear_session(self) -> None:
+        """Vide les deux fichiers et tout ce qui en dépend. N'efface ni les exports ni les réglages.
+
+        Sert à enchaîner deux couples : sans ça, remplacer la SOURCE relance aussitôt un calcul
+        avec l'ancienne DESTINATION, avant même d'avoir eu le temps de la remplacer.
+        """
+        self.cancel()
+        with self.lock:
+            for slot in SLOTS:
+                asset = self.assets[slot]
+                if asset is not None:
+                    Path(asset.path).unlink(missing_ok=True)
+                self.assets[slot] = None
+                self.channels[slot] = "mono"
+            self.profile = self.profile_deps = None
+            self.eq_profile = self.eq_deps = self.eq_error = self.eq_error_deps = None
+            self.render = None
+            self.last_export = None
+            self.last_error = None
+            self.job = {"state": "idle", "step": None}
+            self.revision += 1
 
     def reset_dirs(self) -> None:
         # Purge uniquement les dossiers créés par l'application sous sa racine.
@@ -76,6 +120,27 @@ class Project:
 
     # --- dépendances -------------------------------------------------------------------------
 
+    def cache_bytes(self) -> int:
+        """Taille des fichiers importés et des fichiers de travail (hors exports)."""
+        total = 0
+        for d in (self.upload_dir, self.work_dir):
+            if d.exists():
+                total += sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
+        return total
+
+    def export_stats(self) -> dict:
+        files = [f for f in self.export_dir.glob("*") if f.is_file()] if self.export_dir.exists() else []
+        return {"count": len(files), "bytes": sum(f.stat().st_size for f in files)}
+
+    def delete_exports(self) -> dict:
+        """Supprime les fichiers exportés. Destructif : uniquement sur demande explicite de l'utilisateur."""
+        stats = self.export_stats()
+        for f in self.export_dir.glob("*"):
+            if f.is_file():
+                f.unlink(missing_ok=True)
+        self.export_dir.mkdir(parents=True, exist_ok=True)
+        return stats
+
     def source_deps(self) -> tuple | None:
         a = self.assets["source"]
         return None if a is None else (a.sha256, self.channels["source"], recrir.ADAPTER_VERSION)
@@ -83,11 +148,43 @@ class Project:
     def profile_ok(self) -> bool:
         return self.profile is not None and self.profile_deps == self.source_deps()
 
+    def eq_target_deps(self) -> tuple | None:
+        """Ce dont dépend la courbe de raccord : les deux fichiers, la pièce et le dosage de reverb
+        (la cible inclut la reverb rendue), plus l'intensité et la politique de niveau."""
+        src, dst = self.assets["source"], self.assets["destination"]
+        if src is None or dst is None or not self.profile_ok():
+            return None
+        return (src.sha256, self.channels["source"], dst.sha256, self.channels["destination"],
+                self.profile.profile_id, self.settings.wet_gain_db,
+                self.settings.additional_predelay_seconds, self.eq.amount, self.eq.preserve_adr_level,
+                eq_match.MATCH_VERSION)
+
+    def eq_failed(self) -> bool:
+        """Échec encore valable : si les entrées ont changé, on retentera."""
+        if self.eq_error is None:
+            return False
+        if self.eq_error_deps != self.eq_target_deps():
+            self.eq_error, self.eq_error_deps = None, None
+            return False
+        return True
+
+    def eq_ok(self) -> bool:
+        return bool(self.eq.enabled and self.eq_profile is not None and self.eq_deps == self.eq_target_deps())
+
+    def eq_pending(self) -> bool:
+        return bool(self.eq.enabled and not self.eq_ok() and not self.eq_failed())
+
+    def active_eq(self) -> dict | None:
+        return self.eq_profile if self.eq_ok() else None
+
     def render_key(self) -> str | None:
         d = self.assets["destination"]
         if d is None or not self.profile_ok():
             return None
-        return pipeline.dependency_key(d, self.channels["destination"], self.profile, self.settings)
+        if self.eq_pending():
+            return None  # la courbe doit être calculée avant le rendu
+        return pipeline.dependency_key(d, self.channels["destination"], self.profile, self.settings,
+                                       self.active_eq())
 
     def render_ok(self) -> bool:
         return self.render is not None and self.render.dependency_key == self.render_key()
@@ -101,7 +198,7 @@ class Project:
                 return
             if self.assets["source"] is None or self.assets["destination"] is None:
                 return
-            if self.profile_ok() and self.render_ok():
+            if self.profile_ok() and self.render_ok() and not self.eq_pending():
                 return
             if self.job["state"] == "failed" and self.job.get("failed_key") == self._work_key():
                 return  # même entrées que l'échec précédent : pas de relance en boucle
@@ -114,7 +211,7 @@ class Project:
     def _work_key(self):
         return (self.source_deps(), self.render_key() if self.profile_ok() else None,
                 self.assets["destination"].sha256 if self.assets["destination"] else None,
-                self.channels["destination"], self.settings)
+                self.channels["destination"], self.settings, self.eq)
 
     def _set_job(self, state, step=None, **extra):
         self.job = {"state": state, "step": step, **extra}
@@ -153,9 +250,32 @@ class Project:
                             self.profile, self.profile_deps = new_profile, src_deps
                         self.revision += 1
                     continue
+                if self.eq_pending():
+                    self._set_job("running", "Analyse du timbre", kind="eq")
+                    eq_deps = self.eq_target_deps()
+                    try:
+                        eq_profile = eq_match.build_profile(
+                            io.select_channel(src, src_ch), src.sample_rate_hz,
+                            io.select_channel(dst, dst_ch), dst.sample_rate_hz,
+                            profile, settings, amount=self.eq.amount,
+                            preserve_level=self.eq.preserve_adr_level)
+                    except MimeticError as exc:
+                        if not exc.code.startswith("EQ_"):
+                            raise
+                        # Un échec d'EQ ne détruit pas la pièce : on rend sans correction et on le dit.
+                        with self.lock:
+                            self.eq_error, self.eq_error_deps = exc.to_dict(), eq_deps
+                            self.eq_profile, self.eq_deps = None, None
+                            self.revision += 1
+                        continue
+                    with self.lock:
+                        if self.eq_target_deps() == eq_deps:
+                            self.eq_profile, self.eq_deps, self.eq_error = eq_profile, eq_deps, None
+                        self.revision += 1
+                    continue
                 if not self.render_ok():
                     self._set_job("running", "Calcul de la reverb", kind="render")
-                    result = pipeline.render(dst, dst_ch, profile, settings)
+                    result = pipeline.render(dst, dst_ch, profile, settings, self.active_eq())
                     with self.lock:
                         if result.dependency_key == self.render_key():
                             self.render = result
@@ -166,7 +286,8 @@ class Project:
                 # sinon le job se termine et kick() pourra en démarrer un nouveau.
                 with self.lock:
                     if (self.assets["source"] is not None and self.assets["destination"] is not None
-                            and not (self.profile_ok() and self.render_ok()) and not self.cancel_requested):
+                            and not (self.profile_ok() and self.render_ok() and not self.eq_pending())
+                            and not self.cancel_requested):
                         continue
                     self.worker_thread = None
                     self._set_job("idle")
@@ -209,6 +330,29 @@ class Project:
 
     # --- état --------------------------------------------------------------------------------
 
+    def eq_snapshot(self) -> dict:
+        state = ("disabled" if not self.eq.enabled else
+                 "failed" if self.eq_failed() else
+                 "ready" if self.eq_ok() else "pending")
+        curve = None
+        if self.eq_profile is not None and self.eq_ok():
+            c = self.eq_profile["curve"]
+            curve = {"frequencies_hz": np.asarray(c["frequencies_hz"]).round(1).tolist(),
+                     "gain_db": np.asarray(c["gain_db"]).round(2).tolist(),
+                     "level_offset_db": c["level_offset_db"],
+                     "saturated_fraction": c["saturated_fraction"],
+                     "bounds_db": c["bounds_db"],
+                     "reference_active_seconds": c["reference_active_seconds"],
+                     "destination_active_seconds": c["destination_active_seconds"],
+                     "filter_taps": self.eq_profile["filter"]["taps"],
+                     "filter_fit_error_db": self.eq_profile["filter"]["fit_error_db"],
+                     "warnings": c["warnings"]}
+        return {"enabled": self.eq.enabled, "amount": self.eq.amount,
+                "preserve_adr_level": self.eq.preserve_adr_level, "state": state,
+                "error": self.eq_error if self.eq_failed() else None, "curve": curve,
+                "applied_common_gain_db": (self.render.eq_info or {}).get("applied_common_gain_db")
+                if self.render is not None else None}
+
     def snapshot(self) -> dict:
         def asset(slot):
             a = self.assets[slot]
@@ -224,7 +368,8 @@ class Project:
             r = self.render
             render = {"sample_rate_hz": r.sample_rate_hz, "length_frames": int(r.wet.size),
                       "wet_peak_dbfs": _db(r.wet_peak), "mix_peak_dbfs": _db(r.mix_peak), "warnings": r.warnings,
-                      "dependency_key": r.dependency_key, "stale": not self.render_ok(), "render_ir": r.ir_info}
+                      "dependency_key": r.dependency_key, "stale": not self.render_ok(), "render_ir": r.ir_info,
+                      "eq_applied": bool(r.eq_info)}
         return io.json_safe({
             "app_version": __version__, "dsp_version": DSP_VERSION, "revision": self.revision,
             "job": self.job, "last_error": self.last_error,
@@ -233,8 +378,10 @@ class Project:
             "source": asset("source"), "destination": asset("destination"),
             "settings": {"wet_gain_db": self.settings.wet_gain_db,
                          "additional_predelay_ms": self.settings.additional_predelay_seconds * 1000.0},
-            "profile": prof, "render": render,
+            "profile": prof, "render": render, "eq": self.eq_snapshot(),
             "last_export": self.last_export, "export_dir": str(self.export_dir),
+            "cache_bytes": self.cache_bytes(), "data_dir": str(self.data_dir),
+            "exports": self.export_stats(),
         })
 
 
@@ -276,7 +423,10 @@ def create_app(data_dir: Path | None = None, export_dir: Path | None = None, eng
 
     @app.get("/")
     def index():
-        return FileResponse(STATIC_DIR / "index.html")
+        # La page elle-même ne doit pas être mise en cache : sinon un navigateur garde une ancienne
+        # interface (anciens boutons, anciennes versions de CSS/JS) après une mise à jour.
+        return FileResponse(STATIC_DIR / "index.html",
+                            headers={"Cache-Control": "no-store, must-revalidate"})
 
     @app.get("/api/state")
     def state():
@@ -359,12 +509,63 @@ def create_app(data_dir: Path | None = None, export_dir: Path | None = None, eng
         with project.lock:
             return project.snapshot()
 
+    @app.post("/api/eq/settings")
+    def set_eq(payload: dict | None = None):
+        payload = payload or {}
+        unknown = set(payload) - {"enabled", "amount", "preserve_adr_level"}
+        if unknown:
+            raise MimeticError("INVALID_PARAMETER", f"champs inconnus : {', '.join(sorted(unknown))}")
+        with project.lock:
+            enabled = bool(payload.get("enabled", project.eq.enabled))
+            amount = _num(payload, "amount", project.eq.amount)
+            preserve = bool(payload.get("preserve_adr_level", project.eq.preserve_adr_level))
+            if not 0.0 <= amount <= 1.0:
+                raise MimeticError("INVALID_PARAMETER", "intensité hors [0, 1]")
+            project.eq = EqSettings(enabled, amount, preserve)
+            if not enabled:
+                project.eq_error, project.eq_error_deps = None, None
+            project.revision += 1
+        project.kick()
+        with project.lock:
+            return project.snapshot()
+
     @app.post("/api/retry")
     def retry():
         with project.lock:
             project.job = {"state": "idle", "step": None}
             project.last_error = None
         project.kick()
+        with project.lock:
+            return project.snapshot()
+
+    @app.post("/api/cache/clear")
+    def clear_cache():
+        """Vide les fichiers importés, les fichiers de travail **et les exports**, puis réinitialise la session."""
+        project.cancel()
+        with project.lock:
+            freed = project.cache_bytes()
+            exports = project.delete_exports()
+            for slot in SLOTS:
+                project.assets[slot] = None
+                project.channels[slot] = "mono"
+            project.profile = None
+            project.profile_deps = None
+            project.eq_profile = None
+            project.eq_deps = None
+            project.eq_error = None
+            project.eq_error_deps = None
+            project.render = None
+            project.last_export = None
+            project.last_error = None
+            project.job = {"state": "idle", "step": None}
+            project.reset_dirs()
+            project.revision += 1
+            return {**project.snapshot(), "freed_bytes": freed + exports["bytes"],
+                    "deleted_exports": exports["count"]}
+
+    @app.post("/api/session/new")
+    def new_session():
+        project.clear_session()
         with project.lock:
             return project.snapshot()
 
@@ -383,11 +584,16 @@ def create_app(data_dir: Path | None = None, export_dir: Path | None = None, eng
                 if a is None:
                     raise MimeticError("INVALID_PARAMETER", "aucun fichier")
                 sig, fs = io.select_channel(a, project.channels[kind]), a.sample_rate_hz
-            elif kind in ("dry", "wet"):
+            elif kind in ("dry", "wet", "original"):
                 r = project.render
                 if r is None:
                     raise MimeticError("INVALID_PARAMETER", "aucun rendu")
-                sig, fs = (r.dry if kind == "dry" else r.wet), r.sample_rate_hz
+                # "dry" = branche directe du rendu courant (corrigée si l'EQ est active),
+                # "original" = ADR non corrigé, pour la comparaison avant/après.
+                sig = {"dry": r.dry, "wet": r.wet}.get(kind)
+                if sig is None:
+                    sig = r.original if r.original is not None else r.dry
+                fs = r.sample_rate_hz
             else:
                 raise MimeticError("INVALID_PARAMETER", "flux inconnu")
         return Response(np.asarray(sig, dtype="<f4").tobytes(), media_type="application/octet-stream",
@@ -402,9 +608,10 @@ def create_app(data_dir: Path | None = None, export_dir: Path | None = None, eng
                 raise MimeticError("INVALID_PARAMETER", "aucun rendu à exporter")
             if not project.render_ok():
                 raise MimeticError("STALE_RESULT")
-        out = pipeline.export(r, dst, ch, prof, st, project.export_dir, bool((payload or {}).get("export_ir")))
+        mode = (payload or {}).get("mode", "wet")
+        out = pipeline.export(r, dst, ch, prof, st, project.export_dir, mode=mode)
         with project.lock:
-            project.last_export = {"files": out["files"], "directory": out["directory"]}
+            project.last_export = {"files": out["files"], "directory": out["directory"], "mode": mode}
             project.revision += 1
             return project.snapshot()
 
@@ -416,5 +623,6 @@ def create_app(data_dir: Path | None = None, export_dir: Path | None = None, eng
             raise MimeticError("INVALID_PARAMETER", "fichier introuvable")
         return FileResponse(target, filename=target.name)
 
-    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    app.mount("/static", NoCacheStatic(directory=STATIC_DIR), name="static")
     return app
+

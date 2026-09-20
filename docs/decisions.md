@@ -110,6 +110,49 @@ Réserve méthodologique : la forme f² de la décroissance est un choix physiqu
 
 Seule dépendance extérieure : l'interpréteur Python 3.11 de la machine, dont les venvs héritent (fonctionnement normal d'un venv). Les paquets, eux, sont installés dans le projet, avec `--no-cache-dir` pour éviter le cache pip du profil utilisateur.
 
+## D11 — 2026-09-19 — Match EQ optionnel et deux modes d'export
+
+Suit `architecture-match-eq.md`. **Option, pas remplacement** : sans Match EQ, le rendu et les échantillons sont exactement ceux d'avant (test bloquant `test_bypass_is_bit_identical`).
+
+Deux exports au choix :
+- **Reverb seule** `…_IR_ONLY.wav` : comportement historique, piste parallèle ;
+- **Clip traité** `…_EQ_IR_MIX.wav` : un seul fichier, voix corrigée + reverb, qui **remplace** l'ADR d'origine.
+
+L'export facultatif de l'IR de pièce s'appelle `…_IR_PROFILE.wav`.
+
+Les suffixes de la première version (`_ADR_REVERB`, `_ADR_MATCHED`, `_PROFILE_WET_IR`) ont été renommés à la demande de l'utilisateur ; les anciens fichiers déjà exportés gardent évidemment leur nom.
+
+Écarts assumés par rapport au document d'architecture :
+- **Silero VAD différé** : détecteur maison énergie/SNR (`energy_snr_v1`), déclaré comme indice d'activité. La dépendance ONNX sera ajoutée seulement si la sélection devient le facteur limitant.
+- **Paramètres de régularisation ajustés** après mesure : `λ0 = 0,05 + 0,25·(1−w)` au lieu de `2·(1−w)`, et poids remis à l'échelle relative. Avec les valeurs du document, la correction mesurée n'était appliquée qu'à ~30 % et le raccord ne progressait pas (voir `docs/eq-validation.md`).
+
+- **Minimum de parole abaissé à 0,8 s** après échec sur une vraie réplique d'ADR (le seuil de 2 s du document écartait un cas courant).
+- **Bornes fixées par l'incertitude mesurée, jamais par la durée** : un ADR est court par nature, lier la force de correction à sa durée briderait la fonction en permanence.
+- **Lissage porté à λ = 5000** et **comparaison par classes de phonèmes essayée puis écartée** (elle double la fausse correction). Mesures : `docs/eq-validation.md`.
+- **Match EQ actif par défaut**, calculé dans la foulée de l'analyse de pièce, sans second clic.
+- **Calage automatique du niveau de reverb : essayé, mesuré, retiré.** Deux estimateurs (tranches après les fins de phrases, temps audible dans les creux) se sont révélés dominés par le rythme de parole ou insensibles au défaut. Sur un même cas réel ils proposaient −3 dB et +12 dB. Le dosage reste manuel ; détails et chiffres dans `docs/eq-validation.md`.
+- **Le clip traité exige le Match EQ** (`EQ_REQUIRED`) : un mélange voix + reverb sans raccord de timbre n'a pas d'usage, la reverb seule le couvre déjà. Demande explicite de l'utilisateur.
+
+Conservé tel quel : cible = mélange virtuel avec la reverb rendue, application unique du filtre à l'ADR, FIR causal par cepstre réel, compensation de niveau commune bornée, bornes de courbe, refus explicites sans casser la reverb.
+
+## D12 — 2026-09-19 — Analyse robuste au bruit de plateau (lots A1/A2)
+
+Suit `docs/architecture-references-difficiles.md`. Trois défauts de la V2 vérifiés puis corrigés : confiance absolue effacée par la normalisation des poids, queue de réverbération comptée comme du bruit, incertitude conventionnelle sur réplique courte. Détails et chiffres : `docs/eq-validation.md`.
+
+- **`c_abs` (fiabilité absolue, jamais renormalisée) séparée des poids relatifs.** C'est le cœur du correctif : un extrait bruité ne peut plus produire la même courbe qu'un extrait propre.
+- **Plus de falaise ni de refus surprise** : la correction décroît continûment de 24 dB à 0 dB de SNR ; le refus est réservé à l'absence réelle d'information.
+- **Fond mesuré loin des mots et de leur décroissance** ; fond négligeable (silence numérique) distingué de fond inconnu.
+- **Rapport signal/bruit redéfini** en parole seule sur bruit.
+- Aucun changement du rendu quand tout est propre : régression de +0,05 dB sur le jeu propre du banc, sous le seuil de 0,25 dB fixé par l'audit.
+- **Aucune correction du bruit lui-même** : ces mesures pilotent uniquement la confiance accordée à chaque bande. Mimetic n'ajoute, ne retire et ne recopie aucun fond sonore.
+
+Lots B (récupérer `y_spch` et `y_rev` de Rec-RIR) et suivants : non entamés.
+
+## D13 — 2026-09-20 — Enchaîner deux couples, et interface jamais mise en cache
+
+- **Bouton « Nouveau duo »** à côté du statut : vide les deux fenêtres et l'analyse, conserve exports et réglages. Sans lui, remplacer la seule SOURCE relançait aussitôt un calcul avec l'ancienne DESTINATION, avant d'avoir pu la remplacer. Le traitement reste automatique (D11) ; c'est l'intention de changer de couple qui devient explicite.
+- **La page HTML porte `Cache-Control: no-store`**, comme le CSS et le JavaScript depuis D11. Sans cela, un navigateur gardait l'ancienne interface après mise à jour et affichait d'anciens boutons.
+
 ## D4 — 2026-09-16 — Zéros exacts dans la convolution
 
 `oaconvolve` (FFT) laisse un bruit ~1e-17 avant la première réflexion. Les zéros initiaux de l'ADR et de l'IR sont retirés avant convolution, puis le résultat est replacé à son indice : zéros exacts, même longueur `N+M-1`.
