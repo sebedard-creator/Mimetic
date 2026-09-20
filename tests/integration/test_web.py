@@ -90,6 +90,152 @@ def test_two_files_trigger_analysis_and_render_automatically(tmp_path):
     assert client.get("/api/exports/..%2F..%2Fsecret.wav").status_code in (400, 404)
 
 
+def fake_estimator_per_channel(calls):
+    """Estimateur de test donnant une pièce **différente** selon le canal analysé."""
+    def estimate(signal, fs, *, workdir, client, reference_meta, progress):
+        calls.append(reference_meta.get("channel_mode"))
+        progress("Analyse de la pièce")
+        # Canal gauche : pièce courte, une réflexion proche. Canal droit : pièce plus longue.
+        right = reference_meta.get("channel_mode") == "right"
+        h = np.zeros(16000 if right else 8000)
+        h[0] = 1.0
+        if right:
+            h[400], h[12000] = 0.5, 0.25
+        else:
+            h[200] = 0.2
+        p = known_ir.build_profile(h, 16000, source_name="fake", source_sha256="0", convention="total")
+        p.parameters["windows"] = []
+        return p
+    return estimate
+
+
+def test_two_channel_files_are_processed_as_two_independent_tracks(tmp_path):
+    """A1 et A2 = perche et lavalier : deux pièces, deux timbres, un export entrelacé dans l'ordre."""
+    calls = []
+    caps = lambda: {"available": True, "detail": None}  # noqa: E731
+    client = TestClient(create_app(tmp_path / "data", tmp_path / "exports",
+                                   estimator=fake_estimator_per_channel(calls), capabilities=caps))
+    boom, lav = speechy(8, seed=1), speechy(8, seed=5) * 0.6
+    adr_boom, adr_lav = speechy(6, seed=2), speechy(6, seed=6) * 0.6
+    client.post("/api/upload/source?name=ref.wav",
+                content=wav_bytes(np.stack([boom, lav], axis=1)))
+    client.post("/api/upload/destination?name=adr.wav",
+                content=wav_bytes(np.stack([adr_boom, adr_lav], axis=1)))
+    st = wait_idle(client)
+
+    assert st["multitrack"] is True and [t["label"] for t in st["tracks"]] == ["A1", "A2"]
+    assert calls == ["left", "right"]                      # une analyse par piste, dans l'ordre
+    a1, a2 = st["tracks"]
+    assert a1["source_channel"] == "left" and a2["source_channel"] == "right"
+    assert a1["profile"]["profile_id"] != a2["profile"]["profile_id"]
+    assert a1["render"]["length_frames"] != a2["render"]["length_frames"]   # IR de durées différentes
+    assert a1["eq"]["state"] == "ready" and a2["eq"]["state"] == "ready"
+    assert a1["eq"]["curve"]["gain_db"] != a2["eq"]["curve"]["gain_db"]     # timbres corrigés séparément
+
+    # Les flux d'écoute sont bien ceux de la piste demandée.
+    wet1 = np.frombuffer(client.get("/api/pcm/wet?track=0").content, dtype="<f4")
+    wet2 = np.frombuffer(client.get("/api/pcm/wet?track=1").content, dtype="<f4")
+    assert wet1.size == a1["render"]["length_frames"] and wet2.size == a2["render"]["length_frames"]
+    assert client.get("/api/pcm/wet?track=2").status_code == 400
+
+    # Export entrelacé : A1 reste A1, A2 reste A2, la piste courte est complétée à la fin.
+    st = client.post("/api/export", json={"mode": "wet"}).json()
+    name = st["last_export"]["files"]["wet_wav"]
+    audio, fs = sf.read(pyio.BytesIO(client.get(f"/api/exports/{name}").content), dtype="float32")
+    assert audio.ndim == 2 and audio.shape[1] == 2 and fs == FS
+    assert audio.shape[0] == max(wet1.size, wet2.size)
+    np.testing.assert_allclose(audio[: wet1.size, 0], wet1, atol=1e-6)
+    np.testing.assert_allclose(audio[: wet2.size, 1], wet2, atol=1e-6)
+    assert np.all(audio[wet1.size:, 0] == 0) or wet1.size == audio.shape[0]  # complété à la fin
+
+    report = json.loads((tmp_path / "exports" / st["last_export"]["files"]["report_json"]).read_text(encoding="utf-8"))
+    assert report["output"]["channels"] == 2 and report["output"]["channel_order"] == ["A1", "A2"]
+    assert report["output"]["shorter_tracks_zero_padded_at_end"] is True
+    assert [t["label"] for t in report["tracks"]] == ["A1", "A2"]
+    assert report["tracks"][0]["profile"]["profile_id"] != report["tracks"][1]["profile"]["profile_id"]
+
+    # Le clip traité sort lui aussi entrelacé, voix corrigée par piste.
+    st = client.post("/api/export", json={"mode": "matched"}).json()
+    matched, _ = sf.read(pyio.BytesIO(client.get(
+        f"/api/exports/{st['last_export']['files']['matched_wav']}").content), dtype="float32")
+    dry1 = np.frombuffer(client.get("/api/pcm/dry?track=0").content, dtype="<f4")
+    np.testing.assert_allclose(matched[: dry1.size, 0], dry1 + wet1, atol=1e-6)
+
+
+def test_channel_count_mismatch_stays_in_manual_mode(tmp_path):
+    client = make_client(tmp_path)
+    rng = np.random.default_rng(11)
+    client.post("/api/upload/source?name=stereo.wav", content=wav_bytes(rng.uniform(-0.2, 0.2, (FS * 4, 2))))
+    client.post("/api/upload/destination?name=mono.wav", content=wav_bytes(speechy(5, seed=3)))
+    st = wait_idle(client)
+    assert st["multitrack"] is False and st["channel_mismatch"] is True
+    assert len(st["tracks"]) == 1 and st["tracks"][0]["source_channel"] == "left"
+    st = client.post("/api/channel/source", json={"mode": "right"}).json()
+    assert st["tracks"][0]["source_channel"] == "right"
+
+
+def test_one_track_can_fail_without_losing_the_other(tmp_path, monkeypatch):
+    """Panne sur A2 : A1 garde son rendu et reste consultable ; l'export entrelacé, lui, est refusé.
+
+    C'est l'état que l'interface doit continuer d'afficher (sélecteur de piste compris) ; un export
+    à moitié calculé n'aurait aucun sens dans un fichier entrelacé."""
+    from mimetic.web import server as srv
+
+    real_render = srv.pipeline.render
+
+    def render(adr, channel_mode, profile, settings, eq=None):
+        if channel_mode == "right":
+            raise MemoryError("panne injectée")
+        return real_render(adr, channel_mode, profile, settings, eq)
+
+    monkeypatch.setattr(srv.pipeline, "render", render)
+    calls = []
+    caps = lambda: {"available": True, "detail": None}  # noqa: E731
+    client = TestClient(create_app(tmp_path / "data", tmp_path / "exports",
+                                   estimator=fake_estimator_per_channel(calls), capabilities=caps))
+    client.post("/api/upload/source?name=ref.wav",
+                content=wav_bytes(np.stack([speechy(8, seed=1), speechy(8, seed=5)], axis=1)))
+    client.post("/api/upload/destination?name=adr.wav",
+                content=wav_bytes(np.stack([speechy(6, seed=2), speechy(6, seed=6)], axis=1)))
+    st = wait_idle(client)
+
+    a1, a2 = st["tracks"]
+    assert st["job"]["state"] == "failed" and st["last_error"]["code"] == "OUT_OF_MEMORY"
+    assert a1["render"] is not None and a2["render"] is None    # la piste saine survit
+    assert a1["profile"] is not None and a2["profile"] is not None
+    assert np.frombuffer(client.get("/api/pcm/wet?track=0").content, dtype="<f4").size > 0
+    assert client.get("/api/pcm/wet?track=1").status_code == 400
+    for mode in ("wet", "matched", "ir_profile"):
+        assert client.post("/api/export", json={"mode": mode}).status_code == 400
+
+
+def test_eq_failure_on_one_track_blocks_only_the_matched_export(tmp_path):
+    """Match EQ impossible sur A2 : les deux pistes se rendent quand même, seul EQ_IR_MIX est refusé."""
+    calls = []
+    caps = lambda: {"available": True, "detail": None}  # noqa: E731
+    client = TestClient(create_app(tmp_path / "data", tmp_path / "exports",
+                                   estimator=fake_estimator_per_channel(calls), capabilities=caps))
+    client.post("/api/upload/source?name=ref.wav",
+                content=wav_bytes(np.stack([speechy(8, seed=1), speechy(8, seed=5)], axis=1)))
+    # A2 de la destination : silence numérique, aucun timbre à comparer.
+    adr = np.stack([speechy(6, seed=2), np.zeros(6 * FS)], axis=1)
+    client.post("/api/upload/destination?name=adr.wav", content=wav_bytes(adr))
+    st = wait_idle(client)
+
+    a1, a2 = st["tracks"]
+    assert a1["eq"]["state"] == "ready" and a2["eq"]["state"] == "failed"
+    assert a2["eq"]["error"]["code"] == "EQ_INSUFFICIENT_SPEECH"
+    assert a1["render"] is not None and a2["render"] is not None   # la reverb reste calculée
+    assert st["job"]["state"] == "idle"
+
+    r = client.post("/api/export", json={"mode": "matched"})
+    assert r.status_code == 400 and r.json()["error"]["code"] == "EQ_REQUIRED"
+    st = client.post("/api/export", json={"mode": "wet"}).json()   # l'export sans EQ reste possible
+    audio, _ = sf.read(pyio.BytesIO(client.get(
+        f"/api/exports/{st['last_export']['files']['wet_wav']}").content), dtype="float32")
+    assert audio.ndim == 2 and audio.shape[1] == 2
+
+
 def test_new_pair_clears_both_files_without_touching_exports(tmp_path):
     """Enchaîner deux couples : remplacer la seule SOURCE relancerait un calcul avec l'ancien ADR."""
     calls = []
@@ -189,7 +335,8 @@ def test_match_eq_toggle_render_and_both_export_modes(tmp_path):
     audio, fs = sf.read(pyio.BytesIO(client.get(f"/api/exports/{matched}").content), dtype="float32")
     np.testing.assert_allclose(audio, dry + wet_eq, atol=1e-6)  # voix corrigée + reverb
     report = json.loads((tmp_path / "exports" / st["last_export"]["files"]["report_json"]).read_text(encoding="utf-8"))
-    assert report["output"]["mode"] == "matched" and report["eq"]["amount"] == 1.0
+    assert report["output"]["mode"] == "matched" and report["output"]["channels"] == 1
+    assert report["tracks"][0]["eq"]["amount"] == 1.0
     assert "REMPLACE" in report["placement"]
 
     # retour à OFF : rendu identique au tout premier, et plus de clip traité possible

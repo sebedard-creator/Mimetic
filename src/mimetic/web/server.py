@@ -74,13 +74,9 @@ class Project:
         self.channels: dict[str, str] = {s: "mono" for s in SLOTS}
         self.settings = RenderSettings()
         self.eq = EqSettings()
-        self.eq_profile: dict | None = None
-        self.eq_deps: tuple | None = None
-        self.eq_error: dict | None = None
-        self.eq_error_deps: tuple | None = None
-        self.profile: RoomProfile | None = None
-        self.profile_deps: tuple | None = None
-        self.render: RenderResult | None = None
+        # Tout l'état lourd est **par piste** : un fichier à deux canaux vaut deux traitements mono
+        # indépendants (perche et lavalier n'ont ni la même pièce ni le même timbre).
+        self.track_state: dict[int, dict] = {}
         self.last_export: dict | None = None
 
         self.job = {"state": "idle", "step": None}
@@ -102,9 +98,7 @@ class Project:
                     Path(asset.path).unlink(missing_ok=True)
                 self.assets[slot] = None
                 self.channels[slot] = "mono"
-            self.profile = self.profile_deps = None
-            self.eq_profile = self.eq_deps = self.eq_error = self.eq_error_deps = None
-            self.render = None
+            self.track_state.clear()
             self.last_export = None
             self.last_error = None
             self.job = {"state": "idle", "step": None}
@@ -141,53 +135,89 @@ class Project:
         self.export_dir.mkdir(parents=True, exist_ok=True)
         return stats
 
-    def source_deps(self) -> tuple | None:
+    # --- pistes ------------------------------------------------------------------------------
+
+    def multitrack(self) -> bool:
+        """Deux pistes de chaque côté : appariement A1↔A1, A2↔A2, sans jamais les mélanger.
+
+        L'ordre des canaux du fichier fait foi ; c'est à l'utilisateur de le rendre cohérent entre
+        la source et la destination. Des nombres de canaux différents restent en mode manuel.
+        """
+        src, dst = self.assets["source"], self.assets["destination"]
+        return bool(src and dst and src.channels == 2 and dst.channels == 2)
+
+    def tracks(self) -> list[dict]:
+        src, dst = self.assets["source"], self.assets["destination"]
+        if src is None or dst is None:
+            return []
+        if self.multitrack():
+            return [{"index": 0, "label": "A1", "source_channel": "left", "channel_mode": "left"},
+                    {"index": 1, "label": "A2", "source_channel": "right", "channel_mode": "right"}]
+        return [{"index": 0, "label": "mono", "source_channel": self.channels["source"],
+                 "channel_mode": self.channels["destination"]}]
+
+    def _st(self, index: int) -> dict:
+        return self.track_state.setdefault(index, {"profile": None, "profile_deps": None, "eq": None,
+                                                   "eq_deps": None, "eq_error": None,
+                                                   "eq_error_deps": None, "render": None})
+
+    def source_deps(self, track: dict | None = None) -> tuple | None:
         a = self.assets["source"]
-        return None if a is None else (a.sha256, self.channels["source"], recrir.ADAPTER_VERSION)
+        if a is None:
+            return None
+        track = track or (self.tracks() or [{"source_channel": self.channels["source"]}])[0]
+        return (a.sha256, track["source_channel"], recrir.ADAPTER_VERSION)
 
-    def profile_ok(self) -> bool:
-        return self.profile is not None and self.profile_deps == self.source_deps()
+    def profile_ok(self, track: dict) -> bool:
+        s = self._st(track["index"])
+        return s["profile"] is not None and s["profile_deps"] == self.source_deps(track)
 
-    def eq_target_deps(self) -> tuple | None:
+    def eq_target_deps(self, track: dict) -> tuple | None:
         """Ce dont dépend la courbe de raccord : les deux fichiers, la pièce et le dosage de reverb
         (la cible inclut la reverb rendue), plus l'intensité et la politique de niveau."""
         src, dst = self.assets["source"], self.assets["destination"]
-        if src is None or dst is None or not self.profile_ok():
+        if src is None or dst is None or not self.profile_ok(track):
             return None
-        return (src.sha256, self.channels["source"], dst.sha256, self.channels["destination"],
-                self.profile.profile_id, self.settings.wet_gain_db,
+        return (src.sha256, track["source_channel"], dst.sha256, track["channel_mode"],
+                self._st(track["index"])["profile"].profile_id, self.settings.wet_gain_db,
                 self.settings.additional_predelay_seconds, self.eq.amount, self.eq.preserve_adr_level,
                 eq_match.MATCH_VERSION)
 
-    def eq_failed(self) -> bool:
+    def eq_failed(self, track: dict) -> bool:
         """Échec encore valable : si les entrées ont changé, on retentera."""
-        if self.eq_error is None:
+        s = self._st(track["index"])
+        if s["eq_error"] is None:
             return False
-        if self.eq_error_deps != self.eq_target_deps():
-            self.eq_error, self.eq_error_deps = None, None
+        if s["eq_error_deps"] != self.eq_target_deps(track):
+            s["eq_error"] = s["eq_error_deps"] = None
             return False
         return True
 
-    def eq_ok(self) -> bool:
-        return bool(self.eq.enabled and self.eq_profile is not None and self.eq_deps == self.eq_target_deps())
+    def eq_ok(self, track: dict) -> bool:
+        s = self._st(track["index"])
+        return bool(self.eq.enabled and s["eq"] is not None and s["eq_deps"] == self.eq_target_deps(track))
 
-    def eq_pending(self) -> bool:
-        return bool(self.eq.enabled and not self.eq_ok() and not self.eq_failed())
+    def eq_pending(self, track: dict) -> bool:
+        return bool(self.eq.enabled and not self.eq_ok(track) and not self.eq_failed(track))
 
-    def active_eq(self) -> dict | None:
-        return self.eq_profile if self.eq_ok() else None
+    def active_eq(self, track: dict) -> dict | None:
+        return self._st(track["index"])["eq"] if self.eq_ok(track) else None
 
-    def render_key(self) -> str | None:
+    def render_key(self, track: dict) -> str | None:
         d = self.assets["destination"]
-        if d is None or not self.profile_ok():
-            return None
-        if self.eq_pending():
-            return None  # la courbe doit être calculée avant le rendu
-        return pipeline.dependency_key(d, self.channels["destination"], self.profile, self.settings,
-                                       self.active_eq())
+        if d is None or not self.profile_ok(track) or self.eq_pending(track):
+            return None  # la pièce, puis la courbe, doivent précéder le rendu
+        return pipeline.dependency_key(d, track["channel_mode"], self._st(track["index"])["profile"],
+                                       self.settings, self.active_eq(track))
 
-    def render_ok(self) -> bool:
-        return self.render is not None and self.render.dependency_key == self.render_key()
+    def render_ok(self, track: dict) -> bool:
+        r = self._st(track["index"])["render"]
+        return r is not None and r.dependency_key == self.render_key(track)
+
+    def all_ready(self) -> bool:
+        tracks = self.tracks()
+        return bool(tracks) and all(self.profile_ok(t) and self.render_ok(t) and not self.eq_pending(t)
+                                    for t in tracks)
 
     # --- job automatique ---------------------------------------------------------------------
 
@@ -198,7 +228,7 @@ class Project:
                 return
             if self.assets["source"] is None or self.assets["destination"] is None:
                 return
-            if self.profile_ok() and self.render_ok() and not self.eq_pending():
+            if self.all_ready():
                 return
             if self.job["state"] == "failed" and self.job.get("failed_key") == self._work_key():
                 return  # même entrées que l'échec précédent : pas de relance en boucle
@@ -209,9 +239,11 @@ class Project:
             self.worker_thread.start()
 
     def _work_key(self):
-        return (self.source_deps(), self.render_key() if self.profile_ok() else None,
+        return (tuple((t["source_channel"], t["channel_mode"],
+                       self.render_key(t) if self.profile_ok(t) else None) for t in self.tracks()),
+                self.assets["source"].sha256 if self.assets["source"] else None,
                 self.assets["destination"].sha256 if self.assets["destination"] else None,
-                self.channels["destination"], self.settings, self.eq)
+                self.settings, self.eq)
 
     def _set_job(self, state, step=None, **extra):
         self.job = {"state": state, "step": step, **extra}
@@ -226,37 +258,51 @@ class Project:
                     src, dst = self.assets["source"], self.assets["destination"]
                     if src is None or dst is None:
                         break
-                    need_profile = not self.profile_ok()
-                    src_deps, src_ch = self.source_deps(), self.channels["source"]
-                    dst_ch, settings, profile = self.channels["destination"], self.settings, self.profile
-                if need_profile:
+                    tracks = self.tracks()
+                    settings = self.settings
+                    todo = next((t for t in tracks if not self.profile_ok(t)), None)
+                    stage = "profile" if todo else None
+                    if todo is None:
+                        todo = next((t for t in tracks if self.eq_pending(t)), None)
+                        stage = "eq" if todo else None
+                    if todo is None:
+                        todo = next((t for t in tracks if not self.render_ok(t)), None)
+                        stage = "render" if todo else None
+                    suffix = f" — piste {todo['label']}" if todo and len(tracks) > 1 else ""
+                    profile = self._st(todo["index"])["profile"] if todo else None
+                    src_deps = self.source_deps(todo) if todo else None
+
+                if stage == "profile":
                     caps = self.capabilities()
                     if not caps.get("available"):
                         raise MimeticError("MODEL_UNAVAILABLE", caps.get("detail"))
-                    self._set_job("running", "Analyse de la pièce", kind="analysis")
-                    signal = io.select_channel(src, src_ch)
+                    self._set_job("running", f"Analyse de la pièce{suffix}", kind="analysis")
+                    signal = io.select_channel(src, todo["source_channel"])
                     meta = {"asset_sha256": src.sha256, "sample_rate_hz": src.sample_rate_hz,
-                            "frame_count": src.frame_count, "channel_mode": src_ch, "name": src.original_name}
+                            "frame_count": src.frame_count, "channel_mode": todo["source_channel"],
+                            "track": todo["label"], "name": src.original_name}
                     workdir = self.work_dir / uuid.uuid4().hex
                     try:
                         new_profile = self.estimator(
                             signal, src.sample_rate_hz, workdir=workdir, client=self.client, reference_meta=meta,
-                            progress=lambda step: self._set_job("running", step, kind="analysis"))
+                            progress=lambda step: self._set_job("running", f"{step}{suffix}", kind="analysis"))
                     finally:
                         shutil.rmtree(workdir, ignore_errors=True)
                     with self.lock:
                         # Résultat ignoré si la source a changé pendant l'analyse (§8) ; la boucle recommence.
-                        if self.source_deps() == src_deps:
-                            self.profile, self.profile_deps = new_profile, src_deps
+                        if self.source_deps(todo) == src_deps:
+                            s = self._st(todo["index"])
+                            s["profile"], s["profile_deps"] = new_profile, src_deps
                         self.revision += 1
                     continue
-                if self.eq_pending():
-                    self._set_job("running", "Analyse du timbre", kind="eq")
-                    eq_deps = self.eq_target_deps()
+
+                if stage == "eq":
+                    self._set_job("running", f"Analyse du timbre{suffix}", kind="eq")
+                    eq_deps = self.eq_target_deps(todo)
                     try:
                         eq_profile = eq_match.build_profile(
-                            io.select_channel(src, src_ch), src.sample_rate_hz,
-                            io.select_channel(dst, dst_ch), dst.sample_rate_hz,
+                            io.select_channel(src, todo["source_channel"]), src.sample_rate_hz,
+                            io.select_channel(dst, todo["channel_mode"]), dst.sample_rate_hz,
                             profile, settings, amount=self.eq.amount,
                             preserve_level=self.eq.preserve_adr_level)
                     except MimeticError as exc:
@@ -264,30 +310,34 @@ class Project:
                             raise
                         # Un échec d'EQ ne détruit pas la pièce : on rend sans correction et on le dit.
                         with self.lock:
-                            self.eq_error, self.eq_error_deps = exc.to_dict(), eq_deps
-                            self.eq_profile, self.eq_deps = None, None
+                            s = self._st(todo["index"])
+                            s["eq_error"], s["eq_error_deps"] = exc.to_dict(), eq_deps
+                            s["eq"], s["eq_deps"] = None, None
                             self.revision += 1
                         continue
                     with self.lock:
-                        if self.eq_target_deps() == eq_deps:
-                            self.eq_profile, self.eq_deps, self.eq_error = eq_profile, eq_deps, None
+                        if self.eq_target_deps(todo) == eq_deps:
+                            s = self._st(todo["index"])
+                            s["eq"], s["eq_deps"], s["eq_error"] = eq_profile, eq_deps, None
                         self.revision += 1
                     continue
-                if not self.render_ok():
-                    self._set_job("running", "Calcul de la reverb", kind="render")
-                    result = pipeline.render(dst, dst_ch, profile, settings, self.active_eq())
+
+                if stage == "render":
+                    self._set_job("running", f"Calcul de la reverb{suffix}", kind="render")
+                    result = pipeline.render(dst, todo["channel_mode"], profile, settings,
+                                             self.active_eq(todo))
                     with self.lock:
-                        if result.dependency_key == self.render_key():
-                            self.render = result
+                        if result.dependency_key == self.render_key(todo):
+                            self._st(todo["index"])["render"] = result
                             self.last_export = None
                         self.revision += 1
                     continue
+
                 # Vérification finale atomique : un changement arrivé pendant le dernier calcul relance la boucle ;
                 # sinon le job se termine et kick() pourra en démarrer un nouveau.
                 with self.lock:
                     if (self.assets["source"] is not None and self.assets["destination"] is not None
-                            and not (self.profile_ok() and self.render_ok() and not self.eq_pending())
-                            and not self.cancel_requested):
+                            and not self.all_ready() and not self.cancel_requested):
                         continue
                     self.worker_thread = None
                     self._set_job("idle")
@@ -330,46 +380,58 @@ class Project:
 
     # --- état --------------------------------------------------------------------------------
 
-    def eq_snapshot(self) -> dict:
+    def eq_snapshot(self, track: dict) -> dict:
+        s = self._st(track["index"])
         state = ("disabled" if not self.eq.enabled else
-                 "failed" if self.eq_failed() else
-                 "ready" if self.eq_ok() else "pending")
+                 "failed" if self.eq_failed(track) else
+                 "ready" if self.eq_ok(track) else "pending")
         curve = None
-        if self.eq_profile is not None and self.eq_ok():
-            c = self.eq_profile["curve"]
+        if s["eq"] is not None and self.eq_ok(track):
+            c = s["eq"]["curve"]
             curve = {"frequencies_hz": np.asarray(c["frequencies_hz"]).round(1).tolist(),
                      "gain_db": np.asarray(c["gain_db"]).round(2).tolist(),
                      "level_offset_db": c["level_offset_db"],
                      "saturated_fraction": c["saturated_fraction"],
                      "bounds_db": c["bounds_db"],
+                     "median_confidence": c.get("median_confidence"),
                      "reference_active_seconds": c["reference_active_seconds"],
                      "destination_active_seconds": c["destination_active_seconds"],
-                     "filter_taps": self.eq_profile["filter"]["taps"],
-                     "filter_fit_error_db": self.eq_profile["filter"]["fit_error_db"],
+                     "filter_taps": s["eq"]["filter"]["taps"],
+                     "filter_fit_error_db": s["eq"]["filter"]["fit_error_db"],
                      "warnings": c["warnings"]}
+        render = s["render"]
         return {"enabled": self.eq.enabled, "amount": self.eq.amount,
                 "preserve_adr_level": self.eq.preserve_adr_level, "state": state,
-                "error": self.eq_error if self.eq_failed() else None, "curve": curve,
-                "applied_common_gain_db": (self.render.eq_info or {}).get("applied_common_gain_db")
-                if self.render is not None else None}
+                "error": s["eq_error"] if self.eq_failed(track) else None, "curve": curve,
+                "applied_common_gain_db": (render.eq_info or {}).get("applied_common_gain_db")
+                if render is not None else None}
+
+    def track_snapshot(self, track: dict) -> dict:
+        s = self._st(track["index"])
+        prof = None
+        if s["profile"] is not None:
+            p = s["profile"]
+            prof = {**p.manifest(), "valid": self.profile_ok(track), "rt60_s": p.parameters.get("t20_rt60_s"),
+                    "envelope_db": _envelope_db(p.wet_ir, p.sample_rate_hz)}
+        render = None
+        if s["render"] is not None:
+            r = s["render"]
+            render = {"sample_rate_hz": r.sample_rate_hz, "length_frames": int(r.wet.size),
+                      "wet_peak_dbfs": _db(r.wet_peak), "mix_peak_dbfs": _db(r.mix_peak), "warnings": r.warnings,
+                      "dependency_key": r.dependency_key, "stale": not self.render_ok(track),
+                      "render_ir": r.ir_info, "eq_applied": bool(r.eq_info)}
+        return {"index": track["index"], "label": track["label"],
+                "source_channel": track["source_channel"], "destination_channel": track["channel_mode"],
+                "profile": prof, "render": render, "eq": self.eq_snapshot(track)}
 
     def snapshot(self) -> dict:
         def asset(slot):
             a = self.assets[slot]
             return None if a is None else {**a.summary(), "channel_mode": self.channels[slot]}
 
-        prof = None
-        if self.profile is not None:
-            p = self.profile
-            prof = {**p.manifest(), "valid": self.profile_ok(),
-                    "rt60_s": p.parameters.get("t20_rt60_s"), "envelope_db": _envelope_db(p.wet_ir, p.sample_rate_hz)}
-        render = None
-        if self.render is not None:
-            r = self.render
-            render = {"sample_rate_hz": r.sample_rate_hz, "length_frames": int(r.wet.size),
-                      "wet_peak_dbfs": _db(r.wet_peak), "mix_peak_dbfs": _db(r.mix_peak), "warnings": r.warnings,
-                      "dependency_key": r.dependency_key, "stale": not self.render_ok(), "render_ir": r.ir_info,
-                      "eq_applied": bool(r.eq_info)}
+        tracks = [self.track_snapshot(t) for t in self.tracks()]
+        first = tracks[0] if tracks else {"profile": None, "render": None,
+                                          "eq": self.eq_snapshot({"index": 0})}
         return io.json_safe({
             "app_version": __version__, "dsp_version": DSP_VERSION, "revision": self.revision,
             "job": self.job, "last_error": self.last_error,
@@ -378,7 +440,12 @@ class Project:
             "source": asset("source"), "destination": asset("destination"),
             "settings": {"wet_gain_db": self.settings.wet_gain_db,
                          "additional_predelay_ms": self.settings.additional_predelay_seconds * 1000.0},
-            "profile": prof, "render": render, "eq": self.eq_snapshot(),
+            "multitrack": self.multitrack(),
+            "channel_mismatch": bool(self.assets["source"] and self.assets["destination"]
+                                     and self.assets["source"].channels != self.assets["destination"].channels),
+            "tracks": tracks,
+            # Vue de la première piste, pour tout ce qui ne dépend pas du choix d'écoute.
+            "profile": first["profile"], "render": first["render"], "eq": first["eq"],
             "last_export": self.last_export, "export_dir": str(self.export_dir),
             "cache_bytes": self.cache_bytes(), "data_dir": str(self.data_dir),
             "exports": self.export_stats(),
@@ -523,7 +590,8 @@ def create_app(data_dir: Path | None = None, export_dir: Path | None = None, eng
                 raise MimeticError("INVALID_PARAMETER", "intensité hors [0, 1]")
             project.eq = EqSettings(enabled, amount, preserve)
             if not enabled:
-                project.eq_error, project.eq_error_deps = None, None
+                for s in project.track_state.values():
+                    s["eq_error"] = s["eq_error_deps"] = None
             project.revision += 1
         project.kick()
         with project.lock:
@@ -548,13 +616,7 @@ def create_app(data_dir: Path | None = None, export_dir: Path | None = None, eng
             for slot in SLOTS:
                 project.assets[slot] = None
                 project.channels[slot] = "mono"
-            project.profile = None
-            project.profile_deps = None
-            project.eq_profile = None
-            project.eq_deps = None
-            project.eq_error = None
-            project.eq_error_deps = None
-            project.render = None
+            project.track_state.clear()
             project.last_export = None
             project.last_error = None
             project.job = {"state": "idle", "step": None}
@@ -576,16 +638,25 @@ def create_app(data_dir: Path | None = None, export_dir: Path | None = None, eng
             return project.snapshot()
 
     @app.get("/api/pcm/{kind}")
-    def pcm(kind: str):
-        """Float32 LE brut pour l'écoute : mêmes tableaux que l'export, sans normalisation."""
+    def pcm(kind: str, track: int = 0):
+        """Float32 LE brut pour l'écoute : mêmes tableaux que l'export, sans normalisation.
+
+        `track` choisit la piste en mode deux canaux ; les fichiers importés sont eux servis dans
+        le canal correspondant à cette piste."""
         with project.lock:
+            tracks = project.tracks()
+            if track < 0 or track >= max(len(tracks), 1):
+                raise MimeticError("INVALID_PARAMETER", f"piste {track} inconnue")
+            sel = tracks[track] if tracks else None
             if kind in SLOTS:
                 a = project.assets[kind]
                 if a is None:
                     raise MimeticError("INVALID_PARAMETER", "aucun fichier")
-                sig, fs = io.select_channel(a, project.channels[kind]), a.sample_rate_hz
+                channel = project.channels[kind] if sel is None else (
+                    sel["source_channel"] if kind == "source" else sel["channel_mode"])
+                sig, fs = io.select_channel(a, channel), a.sample_rate_hz
             elif kind in ("dry", "wet", "original"):
-                r = project.render
+                r = project._st(track)["render"]
                 if r is None:
                     raise MimeticError("INVALID_PARAMETER", "aucun rendu")
                 # "dry" = branche directe du rendu courant (corrigée si l'EQ est active),
@@ -602,14 +673,17 @@ def create_app(data_dir: Path | None = None, export_dir: Path | None = None, eng
     @app.post("/api/export")
     def do_export(payload: dict | None = None):
         with project.lock:
-            r, dst, prof = project.render, project.assets["destination"], project.profile
-            ch, st = project.channels["destination"], project.settings
-            if r is None:
+            dst, st = project.assets["destination"], project.settings
+            tracks = project.tracks()
+            if not tracks or any(project._st(t["index"])["render"] is None for t in tracks):
                 raise MimeticError("INVALID_PARAMETER", "aucun rendu à exporter")
-            if not project.render_ok():
+            if any(not project.render_ok(t) for t in tracks):
                 raise MimeticError("STALE_RESULT")
+            # Toutes les pistes partent ensemble, dans l'ordre des canaux d'entrée.
+            bundle = [{**t, "result": project._st(t["index"])["render"],
+                       "profile": project._st(t["index"])["profile"]} for t in tracks]
         mode = (payload or {}).get("mode", "wet")
-        out = pipeline.export(r, dst, ch, prof, st, project.export_dir, mode=mode)
+        out = pipeline.export(bundle, dst, st, project.export_dir, mode=mode)
         with project.lock:
             project.last_export = {"files": out["files"], "directory": out["directory"], "mode": mode}
             project.revision += 1

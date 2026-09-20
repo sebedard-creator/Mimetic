@@ -104,15 +104,36 @@ EXPORT_SUFFIX = {"wet": "_IR_ONLY", "matched": "_EQ_IR_MIX", "ir_profile": "_IR_
 EXPORT_FILE_KEY = {"wet": "wet_wav", "matched": "matched_wav", "ir_profile": "ir_profile_wav"}
 
 
-def export(result: RenderResult, adr: AudioAsset, channel_mode: str, profile: RoomProfile,
-           settings: RenderSettings, directory: Path, mode: str = "wet") -> dict:
-    """mode="wet" : reverb seule, à poser en parallèle de l'ADR original (comportement historique).
-    mode="matched" : un seul fichier ADR traité (EQ de raccord + reverb), qui **remplace** l'ADR.
-    mode="ir_profile" : l'IR wet de la pièce seule, pour un convolueur externe."""
+def interleave(signals: list[np.ndarray]) -> np.ndarray:
+    """Assemble des pistes en un tableau [frames, canaux], dans l'ordre reçu.
+
+    Deux pistes n'ont pas la même longueur quand leurs IR diffèrent : on complète **à la fin**,
+    jamais au début, pour que l'échantillon zéro reste l'origine commune de toutes les pistes.
+    """
+    length = max(s.size for s in signals)
+    out = np.zeros((length, len(signals)))
+    for i, s in enumerate(signals):
+        out[: s.size, i] = s
+    return out
+
+
+def export(tracks: list[dict], adr: AudioAsset, settings: RenderSettings, directory: Path,
+           mode: str = "wet") -> dict:
+    """Écrit un fichier par mode, **entrelacé dans l'ordre des pistes**.
+
+    mode="wet" : reverb seule, à poser en parallèle de l'ADR original (comportement historique).
+    mode="matched" : l'ADR traité (EQ de raccord + reverb), qui **remplace** l'ADR.
+    mode="ir_profile" : l'IR wet de la pièce seule, pour un convolueur externe.
+
+    Chaque piste porte son `result`, son `profile`, son `channel_mode` et son `label` ; l'ordre des
+    canaux de sortie est exactement celui des canaux d'entrée (A1 reste A1).
+    """
     if mode not in EXPORT_MODES:
         raise MimeticError("INVALID_PARAMETER", f"mode d'export inconnu : {mode}")
+    if not tracks:
+        raise MimeticError("INVALID_PARAMETER", "aucune piste à exporter")
     matched = mode == "matched"
-    if matched and result.eq_info is None:
+    if matched and any(t["result"].eq_info is None for t in tracks):
         # Un clip complet sans raccord de timbre n'a pas d'usage : c'est l'ADR + reverb, déjà
         # obtenable en posant la reverb seule. Le mode matched exige donc le Match EQ.
         raise MimeticError("EQ_REQUIRED", "activez Match EQ pour exporter le clip traité")
@@ -126,37 +147,57 @@ def export(result: RenderResult, adr: AudioAsset, channel_mode: str, profile: Ro
     wav_path = directory / f"{stem}.wav"
     json_path = directory / f"{stem}.json"
 
-    audio = {"wet": result.wet, "matched": result.dry + result.wet}.get(mode)
-    if audio is None:
-        audio = profile_ir_at_rate(profile, result.sample_rate_hz)
-    io.write_float_wav(wav_path, audio, result.sample_rate_hz)
+    channels = []
+    per_track = []
+    for t in tracks:
+        result, profile = t["result"], t["profile"]
+        signal = {"wet": result.wet, "matched": result.dry + result.wet}.get(mode)
+        if signal is None:
+            signal = profile_ir_at_rate(profile, result.sample_rate_hz)
+        channels.append(signal)
+        per_track.append({
+            "channel": len(channels),
+            "label": t.get("label"),
+            "source_channel": t.get("source_channel"),
+            "destination_channel": t.get("channel_mode"),
+            "length_frames": int(signal.size),
+            "peak_dbfs": _db(float(np.max(np.abs(signal))) if signal.size else 0.0),
+            "wet_peak_dbfs": _db(result.wet_peak),
+            "mix_peak_dbfs": _db(result.mix_peak),
+            "profile": profile.manifest(),
+            "render_ir": result.ir_info,
+            "eq": result.eq_info,
+            "warnings": result.warnings,
+            "dependency_key": result.dependency_key,
+        })
+    audio = interleave(channels) if len(channels) > 1 else channels[0]
+    fs = tracks[0]["result"].sample_rate_hz
+    io.write_float_wav(wav_path, audio, fs)
     files = {EXPORT_FILE_KEY[mode]: wav_path.name, "report_json": json_path.name}
 
     report = {
-        "schema_version": 1,
+        "schema_version": 2,
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "app_version": __version__,
         "dsp_version": DSP_VERSION,
-        "destination": {**{k: v for k, v in adr.summary().items() if k != "id"}, "channel_mode": channel_mode},
+        "destination": {k: v for k, v in adr.summary().items() if k != "id"},
         "render_settings": {"wet_gain_db": settings.wet_gain_db,
                             "additional_predelay_seconds": settings.additional_predelay_seconds},
-        "profile": profile.manifest(),
         "output": {
             "mode": mode,
-            "sample_rate_hz": result.sample_rate_hz,
-            "length_frames": int(audio.size),
+            "sample_rate_hz": fs,
+            "length_frames": int(audio.shape[0] if audio.ndim > 1 else audio.size),
             "subtype": "FLOAT",
-            "channels": 1,
+            "channels": len(channels),
+            "channel_order": [t.get("label") for t in tracks],
             "content": {"matched": "ADR traité : voix corrigée (EQ de raccord) + reverb de la pièce",
                         "wet": "wet only (réflexions), aligné sur l'échantillon 0 de l'ADR",
                         "ir_profile": "IR wet de la pièce, relative à un direct unitaire"}[mode],
             "peak_dbfs": _db(float(np.max(np.abs(audio))) if audio.size else 0.0),
-            "wet_peak_dbfs": _db(result.wet_peak),
-            "mix_peak_dbfs": _db(result.mix_peak),
+            "shorter_tracks_zero_padded_at_end": bool(len({c.size for c in channels}) > 1),
         },
-        "render_ir": result.ir_info,
-        "eq": result.eq_info,
-        "warnings": result.warnings,
+        "tracks": per_track,
+        "warnings": sorted({w for t in per_track for w in t["warnings"]}),
         "placement": {
             "matched": ("REMPLACE l'ADR original : ne pas superposer les deux, cela doublerait la voix. "
                         "Caler sur le début exact de l'ADR (BWF TimeReference non copié)."),
@@ -164,7 +205,7 @@ def export(result: RenderResult, adr: AudioAsset, channel_mode: str, profile: Ro
             "ir_profile": ("À charger dans un convolueur : désactiver toute normalisation automatique "
                            "pour conserver le dosage calibré."),
         }[mode],
-        "dependency_key": result.dependency_key,
+        "dependency_keys": [t["dependency_key"] for t in per_track],
         "files": files,
     }
     io.write_json(json_path, report)

@@ -117,13 +117,16 @@ def waveform_overview(signal_2d: np.ndarray, buckets: int = 1200) -> dict:
 
 
 def write_float_wav(path: str | os.PathLike, signal: np.ndarray, sample_rate_hz: int) -> None:
-    """Écrit un WAV 32 bits flottant via fichier temporaire + renommage atomique. Aucune normalisation."""
+    """Écrit un WAV 32 bits flottant via fichier temporaire + renommage atomique. Aucune normalisation.
+
+    `signal` est mono (1-D) ou multipiste entrelacé (2-D `[frames, canaux]`, ordre conservé).
+    """
     path = Path(path)
+    signal = np.asarray(signal)
     tmp = path.with_name(path.name + ".tmp")
-    sf.write(str(tmp), np.asarray(signal, dtype=np.float32), sample_rate_hz,
-             subtype="FLOAT", format="WAV")
+    sf.write(str(tmp), signal.astype(np.float32), sample_rate_hz, subtype="FLOAT", format="WAV")
     check = sf.info(str(tmp))
-    if check.frames != len(signal) or check.samplerate != sample_rate_hz:
+    if check.frames != signal.shape[0] or check.samplerate != sample_rate_hz:
         tmp.unlink(missing_ok=True)
         raise MimeticError("ENGINE_FAILURE", "vérification de l'export échouée")
     os.replace(tmp, path)

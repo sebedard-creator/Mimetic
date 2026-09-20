@@ -153,6 +153,20 @@ Lots B (récupérer `y_spch` et `y_rev` de Rec-RIR) et suivants : non entamés.
 - **Bouton « Nouveau duo »** à côté du statut : vide les deux fenêtres et l'analyse, conserve exports et réglages. Sans lui, remplacer la seule SOURCE relançait aussitôt un calcul avec l'ancienne DESTINATION, avant d'avoir pu la remplacer. Le traitement reste automatique (D11) ; c'est l'intention de changer de couple qui devient explicite.
 - **La page HTML porte `Cache-Control: no-store`**, comme le CSS et le JavaScript depuis D11. Sans cela, un navigateur gardait l'ancienne interface après mise à jour et affichait d'anciens boutons.
 
+## D14 — 2026-09-20 — Fichiers entrelacés : deux micros, deux corrections
+
+Sur un plateau, le boom et le lavalier d'une même scène n'ont ni le même timbre ni le même rapport direct/réverbéré. Une correction unique appliquée aux deux est fausse pour au moins l'un des deux.
+
+- **Deux canaux des deux côtés = deux traitements indépendants**, appariés par ordre de canal : A1 source avec A1 destination, A2 avec A2. Profil de pièce, courbe d'EQ et rendu sont calculés séparément pour chaque piste.
+- **La cohérence de l'ordre des canaux appartient à l'utilisateur.** Aucune détection automatique du type de micro : elle serait devinée, donc parfois fausse, et silencieusement.
+- **Les exports respectent le même ordre** et sortent entrelacés : `…_IR_ONLY.wav` porte l'IR_ONLY de A1 sur A1 et celui de A2 sur A2, `…_EQ_IR_MIX.wav` de même.
+- **Complément de zéros à la fin, jamais au début** : l'échantillon zéro reste l'origine commune, le calage sur la tête de fichier vaut pour toutes les pistes (voir D4 et la règle de placement).
+- **Mono inchangé**, et **nombres de canaux différents** entre source et destination : retour au choix manuel d'un canal de chaque côté, avec un avertissement dans la page.
+- **Un seul rapport JSON** (`schema_version: 2`) décrivant l'ordre des canaux et une entrée par piste, plutôt que deux rapports à recoller.
+- **Les trois exports partent ensemble** : tant qu'une piste n'est pas à jour, les boutons restent inactifs. Un fichier entrelacé à moitié recalculé n'aurait aucun sens.
+- **Curseurs communs, analyses séparées.** Niveau de reverb, délai supplémentaire et intensité du Match EQ s'appliquent aux deux pistes : ce sont des choix de mixage sur une même scène, pas des mesures. Les deux micros captent la même pièce au même moment, un dosage divergent serait un défaut de raccord plus souvent qu'une intention. C'est écrit dans la page pour que le partage ne se devine pas.
+- **Une piste en échec ne fait pas disparaître l'autre** : le sélecteur reste affiché, la piste saine reste consultable et écoutable, et le corps du résultat est remplacé par la raison de l'absence. Seul l'export est bloqué, avec le nom de la piste fautive et la cause — un bouton qui ne fait rien sans rien dire est un bug, pas une protection.
+
 ## D4 — 2026-09-16 — Zéros exacts dans la convolution
 
 `oaconvolve` (FFT) laisse un bruit ~1e-17 avant la première réflexion. Les zéros initiaux de l'ADR et de l'IR sont retirés avant convolution, puis le résultat est replacé à son indice : zéros exacts, même longueur `N+M-1`.

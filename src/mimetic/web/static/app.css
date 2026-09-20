@@ -9,7 +9,7 @@ body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 sys
 .top { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 20px; border-bottom: 1px solid var(--line); }
 .brand { font-weight: 700; letter-spacing: .18em; }
 .badge { font-size: 10px; letter-spacing: .1em; padding: 2px 6px; border-radius: 4px; vertical-align: middle; }
-.badge.beta { background: var(--accent2); color: #111; }
+.badge.ver { background: var(--accent); color: #0b1413; }
 .badge.stale { background: var(--panel2); color: var(--accent2); border: 1px solid var(--accent2); }
 main { max-width: 1000px; margin: 0 auto; padding: 16px; }
 h2 { font-size: 15px; margin: 0; letter-spacing: .06em; }
@@ -26,6 +26,7 @@ h2 { font-size: 15px; margin: 0; letter-spacing: .06em; }
 .notice { border-radius: 6px; padding: 10px 12px; margin: 0 0 14px; font-size: 13px; }
 .notice.warn { background: rgba(224,164,74,.1); border: 1px solid rgba(224,164,74,.4); }
 .notice.err { background: #3a1d1d; color: #ffd3d0; border: 1px solid var(--err); }
+.notice.info { background: rgba(79,179,169,.1); border: 1px solid rgba(79,179,169,.4); }
 
 .files { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
 @media (max-width: 720px) { .files { grid-template-columns: 1fr; } }
@@ -87,7 +88,12 @@ dialog .danger-note code { background: rgba(0,0,0,.3); overflow-wrap: anywhere; 
 .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin: 12px 0; }
 input[type=range] { width: 100%; accent-color: var(--accent); }
 output { color: var(--text); font-family: ui-monospace, Consolas, monospace; }
-.eq-box { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 12px 0; background: var(--panel2); }
+.track-tabs { gap: 10px; }
+/* Piste sans rendu : on masque le corps du résultat, jamais le sélecteur de piste. */
+#result.track-empty > *:not(.result-head):not(#trackEmpty) { display: none; }
+.track-tabs label { border: 1px solid var(--line); border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+.track-tabs label.on { border-color: var(--accent); color: var(--accent); }
+.eq-box {border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 12px 0; background: var(--panel2); }
 .eq-toggle { flex-direction: row; align-items: center; gap: 8px; color: var(--text); font-size: 13px; }
 .eq-line { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-top: 8px; }
 .eq-amount { flex-direction: row; align-items: center; gap: 8px; min-width: 240px; }
@@ -107,3 +113,5 @@ output { color: var(--text); font-family: ui-monospace, Consolas, monospace; }
 .tech canvas { margin-top: 10px; }
 code { background: var(--panel2); padding: 1px 4px; border-radius: 3px; }
 a { color: var(--accent); }
+.credit { max-width: 1000px; margin: 0 auto; padding: 0 16px 20px; text-align: right;
+  color: var(--muted); font-size: 10.5px; letter-spacing: .02em; }

@@ -101,12 +101,16 @@ Couverture des tests bloquants §10.1 :
 
 Autres : backend manuel déterministe, DRR calibré, T20 médium à ±20 % du RT60 demandé, `TAIL_TRUNCATED` ; `blind_estimator` refuse ; validation d'import (fréquence, FLAC renommé en .wav, fichier corrompu, durée max) ; workflow web complet (import, `MODEL_UNAVAILABLE`, profil, rendu, obsolescence après changement de profil, export refusé si obsolète, téléchargement = tableau d'écoute, traversée de chemin refusée).
 
-**Non couvert** : rendu par blocs (non implémenté, rendu monobloc avec budget mémoire), BWF TimeReference (non copié), stéréo.
+**Multipiste (fichiers entrelacés, D14)** : deux canaux des deux côtés = deux traitements indépendants. Couvert par `tests/integration/test_web.py` — profils, courbes d'EQ et longueurs de rendu distincts par piste, flux d'écoute par piste, export entrelacé dans l'ordre des canaux avec complément de zéros en fin de fichier, rapport JSON `schema_version: 2`, nombres de canaux dépareillés ramenés au choix manuel, panne de rendu sur une piste (l'autre survit, les trois exports refusent) et échec de Match EQ sur une piste (les deux se rendent, seul `matched` est refusé avec `EQ_REQUIRED`).
+
+**Non couvert** : rendu par blocs (non implémenté, rendu monobloc avec budget mémoire), BWF TimeReference (non copié), vraie stéréo (image inter-canaux : hors périmètre, voir D14), comportement DOM de la page (pas de harnais de test JavaScript ; vérifié à la main dans le navigateur).
 
 ## Vérifications manuelles
 
 - Service lancé, page ouverte via `localhost` et via l'IP LAN `10.0.0.30` depuis la machine hôte.
 - Import référence stéréo + ADR, profil manuel, rendu, curseur de niveau → re-rendu automatique, transport partagé ADR / reverb seule / mélange (même position), export WAV float 48 kHz mono + JSON.
+- Couple 2 canaux (A1 perche wet, A2 lavalier sec) importé dans une instance de test : deux analyses séparées (RT60 0,70 s / 0,46 s ; DRR 3,7 dB / 12,8 dB), sélecteur de piste, trois exports entrelacés relus et vérifiés canal par canal.
+- Interface vérifiée à la main sur une instance à panne injectée : piste en échec (le sélecteur reste atteignable, la piste saine reste consultable), Match EQ impossible sur une seule piste (export nommant la piste et la cause), aperçus des fichiers importés suivant le canal de la piste choisie.
 - **Pas encore fait** : accès depuis un autre poste (pare-feu), écoute réelle, superposition dans un DAW, fichiers de tournage réels.
 
 ## Limites connues

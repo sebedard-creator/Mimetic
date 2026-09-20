@@ -23,6 +23,7 @@ It runs locally as a small Python web service: open the page from any computer o
 - **Honest about itself.** Estimated values, warnings and limitations are shown in the page and written to a JSON report next to every export.
 - **Noise-aware.** Plateau background is measured away from speech and its decay, then discounted: the tone match no longer copies the boom's hiss, and confidence degrades smoothly instead of falling off a cliff.
 - **Full-band output.** The estimator works up to 8 kHz; above that, the highs are reconstructed and clearly flagged as synthesised.
+- **Two mics, two matches.** Hand it interleaved two-channel files — boom on A1, lav on A2 — and each channel is analysed, tone-matched and rendered on its own, then written back in the same channel order.
 - **No cloud, no account, no phone-home.** Local inference on CPU. No GPU required.
 - **Self-contained.** Virtual environments, model weights, working files, exports and logs all live inside the project folder.
 
@@ -37,13 +38,15 @@ It runs locally as a small Python web service: open the page from any computer o
 
 Changing the destination or a setting re-renders only. Changing the source re-runs the analysis.
 
+**Two-channel files.** If both slots hold a two-channel WAV, Mimetic treats them as **two independent sources**: A1 of the source is paired with A1 of the destination, A2 with A2. Each pair gets its own room profile, its own EQ curve and its own render — a boom and a lavalier do not need the same correction — and every export comes back interleaved in that same order. Keeping the channel order consistent between the two files is up to you. A track selector next to the *Reverb* heading picks which one you audition and inspect — waveforms, analysed passages, room figures and Match EQ all follow it; the exports always carry both. The **analyses are per track, the mix settings are shared**: reverb level, extra pre-delay and Match EQ strength apply to A1 and A2 alike, which the page states next to the sliders. If one track fails, the other stays visible and playable and only the export is blocked, naming the track and the reason. Mono in, mono out, exactly as before; a source and a destination with different channel counts fall back to picking one channel on each side.
+
 **Nouveau duo** (*new pair*), next to the status line, empties both slots so you can chain another couple without the analysis firing on a half-replaced pair. Exports and settings are kept.
 
 **Delete Cache** (top right) resets everything after a confirmation dialog: imported files, current room profile, rendered stem, working files **and the exported files** in `data/exports`. Your own source files on disk are never touched.
 
 ### What you get
 
-Three buttons, three deliverables. All are 32-bit float at the destination's sample rate, mono, with no normalisation and no limiter. Clicking a button downloads the WAV right away and keeps a copy in the project's `data/exports`.
+Three buttons, three deliverables. All are 32-bit float at the destination's sample rate, with no normalisation and no limiter, and they carry as many channels as the input pair (one for mono, two interleaved in input order for a two-channel pair; the shorter track is zero-padded at the end, never at the head). Clicking a button downloads the WAV right away and keeps a copy in the project's `data/exports`.
 
 | Button | File | In the DAW |
 |---|---|---|
@@ -122,7 +125,7 @@ New-NetFirewallRule -DisplayName "Mimetic 8765" -Direction Inbound -Protocol TCP
 
 ## Supported audio
 
-WAV, 16/24-bit PCM or 32-bit float, 44.1 or 48 kHz, mono or two channels, up to 10 minutes per file. Two-channel files never get summed silently: you choose left, right, or an explicit mono average. Processing and export are mono.
+WAV, 16/24-bit PCM or 32-bit float, 44.1 or 48 kHz, mono or two channels, up to 10 minutes per file. Two-channel files are never summed silently: a two-channel source **and** a two-channel destination are processed as two independent tracks in channel order, and anything else lets you choose left, right, or an explicit mono average.
 
 ## Under the hood
 
@@ -144,7 +147,7 @@ Mimetic is a **beta**, and deliberately explicit about what it knows:
 - **No room tone.** Ambience is out of scope; take it from the production track.
 - **Tail limited to about 1 s.** Longer decays are truncated and flagged in the page and the report.
 - **A destination with no high-frequency content yields a reverb with none either.**
-- **Mono only.** True stereo would need a different model and routing.
+- **Each channel is treated as its own mono microphone.** Two-channel files are two independent takes of the same scene, not a stereo image: there is no inter-channel coherence, no stereo room model.
 - **No authentication.** Anyone on the network can use the page and download the exports: trusted LAN only.
 - **No listening test yet.** Everything measured so far is spectral and mostly synthetic; no blind comparison, no measured real production/ADR pair.
 - No de-reverberation of the ADR, no batch mode, no plug-in version.

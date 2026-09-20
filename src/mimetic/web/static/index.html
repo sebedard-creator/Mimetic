@@ -3,14 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Mimetic beta</title>
-<link rel="stylesheet" href="/static/app.css?v=8">
+<title>Mimetic v1.0</title>
+<link rel="stylesheet" href="/static/app.css?v=11">
 </head>
 <body>
 <header class="top">
-  <div class="brand">MIMETIC <span class="badge beta">BETA</span></div>
+  <div class="brand">MIMETIC <span class="badge ver">v1.0</span></div>
   <div class="top-right">
-    <span class="muted small hide-narrow">Reverb de tournage → ADR, 100 % wet</span>
     <button id="clearCache" class="btn danger">Delete Cache</button>
   </div>
 </header>
@@ -35,6 +34,16 @@
 <main>
   <div id="engineMissing" class="notice warn hidden">
     <strong>Moteur d'analyse non installé</strong> <span id="engineDetail"></span> : la reverb ne peut pas être estimée.
+  </div>
+
+  <div id="multitrackNotice" class="notice info hidden">
+    <strong>Deux pistes détectées.</strong> A1 et A2 sont analysées et corrigées <strong>séparément</strong>,
+    et ressortent entrelacées dans le même ordre. L'appariement suit l'ordre des canaux : A1 de la source
+    avec A1 de la destination. À vous de vérifier qu'il est cohérent.
+  </div>
+  <div id="mismatchNotice" class="notice warn hidden">
+    <strong>Nombres de pistes différents</strong> entre la source et la destination : l'appariement automatique
+    ne s'applique pas. Choisissez un canal de chaque côté.
   </div>
 
   <section class="files">
@@ -86,9 +95,12 @@
     <div class="result-head">
       <h2><span class="step-no">3</span> Reverb</h2>
       <span id="staleBadge" class="badge stale hidden">RECALCUL…</span>
+      <div id="trackTabs" class="seg track-tabs hidden" role="radiogroup"></div>
       <span class="spacer"></span>
       <div id="roomSummary" class="small"></div>
     </div>
+
+    <p id="trackEmpty" class="notice warn hidden"></p>
 
     <canvas id="resultWave" class="wave big" height="130"></canvas>
     <div class="legend small muted"><span class="sw dry"></span>Destination <span class="sw wet"></span>Reverb</div>
@@ -109,6 +121,7 @@
         <span class="muted small">— corrige aussi le timbre de l'ADR pour coller à la source</span></label>
       <div class="eq-line">
         <span id="eqState" class="small"></span>
+        <span id="eqOtherTracks" class="small hidden"></span>
         <label id="eqAmountWrap" class="hidden eq-amount">Intensité <output id="eqAmountOut">100 %</output>
           <input id="eqAmount" type="range" min="0" max="100" step="5" value="100"></label>
       </div>
@@ -122,6 +135,10 @@
       <label>Volume d'écoute <output id="monOut">-6.0 dB</output>
         <input id="monitor" type="range" min="-40" max="6" step="0.5" value="-6"></label>
     </div>
+
+    <p id="commonSettings" class="hint no-margin hidden">Réglages communs aux deux pistes :
+      niveau de reverb, délai supplémentaire et intensité du Match EQ s'appliquent à A1 comme à A2.
+      Seules les analyses (pièce et timbre) sont indépendantes.</p>
 
     <div class="export-row">
       <div class="export-choice">
@@ -152,7 +169,9 @@
   </details>
 </main>
 
-<script src="/static/app.js?v=8"></script>
+<footer class="credit">Conçu par Sébastien Bédard</footer>
+
+<script src="/static/app.js?v=11"></script>
 </body>
 </html>
 

@@ -4,7 +4,22 @@ const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 
 let S = null;              // dernier état serveur
+let currentTrack = 0;      // piste écoutée et affichée (A1/A2 en mode deux canaux)
 const waves = {};          // aperçus min/max par emplacement
+
+// Vue de la piste courante : en mono il n'y en a qu'une et rien ne change pour l'utilisateur.
+function trackList() { return (S && S.tracks) || []; }
+function track() {
+  const list = trackList();
+  return list[Math.min(currentTrack, list.length - 1)]
+    || { profile: null, render: null, label: "mono", eq: (S && S.eq) || { enabled: false, state: "disabled" } };
+}
+// L'export entrelace toutes les pistes d'un coup : elles doivent donc toutes être rendues.
+function allRendered() {
+  const list = trackList();
+  return list.length > 0 && list.every(t => t.render && !t.render.stale);
+}
+function eqAllReady() { return trackList().every(t => t.eq.state === "ready"); }
 
 // ---------------------------------------------------------------- API
 async function api(method, url, body, raw = false) {
@@ -97,7 +112,7 @@ function renderFiles() {
     $(".drop-text", card).innerHTML = uploading[slot] ? `Envoi de ${esc(uploading[slot])}…`
       : a ? "Remplacer le fichier" : "Déposer un WAV ou <u>choisir</u>";
     $(".asset-info", card).innerHTML = a ? fmtAsset(a, slot) : "";
-    $(".channel", card).classList.toggle("hidden", !a || a.channels === 1);
+    $(".channel", card).classList.toggle("hidden", !a || a.channels === 1 || (S && S.multitrack));
     if (a && a.channels > 1) $("select", card).value = a.channel_mode;
     $(".wave", card).classList.toggle("hidden", !a);
     const listen = $(".listen", card);
@@ -126,7 +141,10 @@ function drawOverview(slot) {
   if (!a || !wv || c.offsetParent === null) return;
   const { g, w, h } = fitCanvas(c);
   g.clearRect(0, 0, w, h);
-  const ch = wv.ov.channels, mode = a.channel_mode;
+  const t = track();
+  // En deux pistes, l'aperçu montre le canal de la piste sélectionnée, comme les cadres d'analyse.
+  const mode = S.multitrack ? (slot === "source" ? t.source_channel : t.destination_channel) : a.channel_mode;
+  const ch = wv.ov.channels;
   const mm = ch.length === 1 || mode === "left" ? ch[0] : mode === "right" ? ch[1]
     : { min: ch[0].min.map((v, i) => (v + ch[1].min[i]) / 2), max: ch[0].max.map((v, i) => (v + ch[1].max[i]) / 2) };
   const n = mm.min.length, mid = h / 2;
@@ -137,10 +155,11 @@ function drawOverview(slot) {
     g.fillRect(x, top, 1, Math.max(1, bot - top));
   }
   // passages analysés
-  if (slot === "source" && S.profile && S.profile.valid) {
+  const shown = t.profile;
+  if (slot === "source" && shown && shown.valid) {
     const frames = a.frame_count;
     g.strokeStyle = css("--accent2"); g.lineWidth = 1.5;
-    for (const win of S.profile.parameters.windows || []) {
+    for (const win of shown.parameters.windows || []) {
       const x0 = win.window_frames[0] / frames * w, x1 = win.window_frames[1] / frames * w;
       g.strokeRect(x0 + 0.75, 1, Math.max(2, x1 - x0 - 1.5), h - 2);
     }
@@ -148,7 +167,7 @@ function drawOverview(slot) {
 }
 
 function drawProfile() {
-  const p = S.profile, c = $("#profileEnv");
+  const p = track().profile, c = $("#profileEnv");
   if (!p || c.offsetParent === null) return;
   const { g, w, h } = fitCanvas(c);
   g.clearRect(0, 0, w, h);
@@ -161,6 +180,25 @@ function drawProfile() {
   g.stroke();
   g.fillStyle = css("--muted"); g.font = "10px system-ui";
   g.fillText(`IR wet estimée (16 kHz, avant extension) — enveloppe dB, ${p.envelope_db.seconds.toFixed(2)} s`, 6, 12);
+}
+
+// ---------------------------------------------------------------- Pistes (fichiers 2 canaux)
+function renderTracks() {
+  const box = $("#trackTabs"), list = trackList(), multi = !!(S && S.multitrack);
+  $("#multitrackNotice").classList.toggle("hidden", !multi);
+  $("#mismatchNotice").classList.toggle("hidden", !(S && S.channel_mismatch));
+  box.classList.toggle("hidden", !multi);
+  if (!multi) { currentTrack = 0; box.innerHTML = ""; return; }
+  if (currentTrack >= list.length) currentTrack = 0;
+  box.innerHTML = list.map((t, i) => `<label class="${i === currentTrack ? "on" : ""}">` +
+    `<input type="radio" name="track" value="${i}"${i === currentTrack ? " checked" : ""}> ${esc(t.label)}</label>`).join("");
+  $$("input[name=track]", box).forEach(r => r.addEventListener("change", () => {
+    // Changer de piste ne relance aucun calcul : on recharge seulement ce qui est affiché et écouté.
+    currentTrack = Number(r.value);
+    if (isResultKind(player.kind)) stopPlayback();
+    player.pos = 0; player.pcm = {}; player.bufs = {}; player.key = null;
+    refresh().catch(showError);
+  }));
 }
 
 // ---------------------------------------------------------------- Statut
@@ -178,7 +216,7 @@ function renderStatus() {
     sub = job.kind === "analysis" ? "Environ 30 s par passage de 6 s analysé (jusqu'à 3 passages)." : "";
   } else if (job.state === "cancelled") text = "Calcul annulé.";
   else if (job.state === "failed") text = "Le calcul a échoué.";
-  else if (S.render && !S.render.stale) text = "Reverb prête.";
+  else if (allRendered()) text = "Reverb prête.";
   else text = "En attente…";
   box.classList.toggle("idle", !running);
   box.classList.toggle("done", !running);
@@ -233,8 +271,9 @@ $("#cacheConfirm").addEventListener("click", async () => {
 let pollTimer = null;
 function schedulePoll() {
   clearTimeout(pollTimer);
-  const pending = S.source && S.destination && (S.job.state === "running" || (S.render && S.render.stale) ||
-    (!S.render && S.job.state === "idle"));
+  // Une seule piste en retard suffit à garder la page en attente : les exports les prennent ensemble.
+  const pending = S.source && S.destination &&
+    (S.job.state === "running" || (S.job.state === "idle" && !allRendered()));
   if (pending) pollTimer = setTimeout(() => refresh().catch(showError), 800);
 }
 
@@ -252,11 +291,26 @@ const CHIPS = {
 };
 
 function renderResult() {
-  const r = S.render, p = S.profile;
-  $("#result").classList.toggle("hidden", !r);
-  if (!r) return;
-  $("#staleBadge").classList.toggle("hidden", !r.stale);
-  $("#export").disabled = r.stale;
+  const t = track(), r = t.render, p = t.profile;
+  // La section reste ouverte dès qu'une piste a un rendu : sinon le sélecteur disparaîtrait
+  // avec elle et on ne pourrait plus revenir sur la piste qui a réussi.
+  const any = trackList().some(x => x.render);
+  $("#result").classList.toggle("hidden", !any);
+  if (!any) return;
+  $("#result").classList.toggle("track-empty", !r);
+  $("#trackEmpty").classList.toggle("hidden", !!r);
+  if (!r) {
+    $("#roomSummary").textContent = "";
+    $("#staleBadge").classList.add("hidden");
+    for (const id of ["#export", "#exportMatched", "#exportIrProfile"]) $(id).disabled = true;
+    $("#trackEmpty").textContent = `Piste ${t.label} : aucun rendu. `
+      + (S.job.state === "running" ? "Calcul en cours." : "Le calcul a échoué ou a été annulé pour cette piste ; "
+        + "les autres pistes restent consultables, et l'export attend que toutes soient prêtes.");
+    return;
+  }
+  $("#staleBadge").classList.toggle("hidden", allRendered());
+  // Les exports partent ensemble : on attend que chaque piste soit à jour.
+  for (const id of ["#export", "#exportMatched", "#exportIrProfile"]) $(id).disabled = !allRendered();
   if (p) {
     const f = (v, d) => v == null ? "n/d" : Number(v).toFixed(d);
     $("#roomSummary").innerHTML = `Pièce estimée : RT60 <b>${f(p.rt60_s, 2)} s</b> · DRR <b>${f(p.drr_db, 1)} dB</b>` +
@@ -313,17 +367,31 @@ $("#exportMatched").addEventListener("click", async () => {
       $("#eqEnabled").checked = true;
       await applyState(await api("POST", "/api/eq/settings", { enabled: true, amount: Number($("#eqAmount").value) / 100 }));
     }
-    for (let i = 0; i < 300 && (S.eq.state === "pending" || (S.render && S.render.stale) || S.job.state === "running"); i++) {
+    for (let i = 0; i < 300 && (!eqAllReady() || !allRendered() || S.job.state === "running"); i++) {
+      if (trackList().some(t => t.eq.state === "failed")) break;
       $("#statusText").textContent = "Préparation du clip traité…";
       await new Promise(r => setTimeout(r, 500));
       await refresh();
     }
-    if (S.eq.state !== "ready") { renderEq(); return; }
+    if (!eqAllReady()) { showError(eqBlockedError()); renderEq(); return; }
     await runExport("matched");
   } catch (e) { showError(e); refresh().catch(() => {}); }
 });
 
 // ---------------------------------------------------------------- Match EQ
+// Le clip traité exige le Match EQ sur *toutes* les pistes : nommer celles qui bloquent.
+function eqBlockedError() {
+  const ko = trackList().filter(t => t.eq.state !== "ready");
+  const why = t => t.eq.state === "failed"
+    ? (EQ_ERRORS[t.eq.error.code] || t.eq.error.message) : "analyse du timbre incomplète";
+  const detail = S.multitrack
+    ? ko.map(t => `${t.label} (${why(t)})`).join(", ")
+    : (ko.length ? why(ko[0]) : "");
+  return { code: "EQ_BLOCKED", message: "Export EQ_IR_MIX bloqué : Match EQ impossible sur " + detail
+    + ". Les deux pistes sortent dans le même fichier, il ne peut pas être écrit à moitié corrigé."
+    + " L'export IR_ONLY, lui, reste disponible." };
+}
+
 const EQ_ERRORS = {
   EQ_INSUFFICIENT_SPEECH: "pas assez de dialogue exploitable des deux côtés",
   EQ_NO_RELIABLE_BANDS: "trop peu de bandes fiables pour une correction",
@@ -345,10 +413,11 @@ $("#eqAmount").addEventListener("input", () => {
 });
 
 function renderEq() {
-  const eq = S.eq;
+  const eq = track().eq, r = track().render;
+  renderOtherTracksEq();
   $("#eqEnabled").checked = eq.enabled;
   $("#eqAmountWrap").classList.toggle("hidden", !eq.enabled || eq.state !== "ready");
-  $("#origOpt").classList.toggle("hidden", !(S.render && S.render.eq_applied));
+  $("#origOpt").classList.toggle("hidden", !(r && r.eq_applied));
   const el = $("#eqState");
   el.className = "small";
   if (!eq.enabled) { el.textContent = "Désactivé : l'ADR n'est pas modifié, seule la reverb est calculée."; el.classList.add("muted"); return; }
@@ -364,6 +433,19 @@ function renderEq() {
   el.innerHTML = `<span class="eq-ready">Correction active</span> · écart de niveau retiré ${(c.level_offset_db || 0).toFixed(1)} dB` +
     (gain == null ? "" : ` · gain de compensation ${gain.toFixed(1)} dB`) +
     (c.saturated_fraction > 0.15 ? ' · <span class="eq-fail">correction limitée par les bornes</span>' : "");
+}
+
+// État du Match EQ des pistes qu'on ne regarde pas : sans cela, un échec sur A2 reste invisible
+// depuis A1, où tout semble en ordre.
+function renderOtherTracksEq() {
+  const el = $("#eqOtherTracks"), others = trackList().filter(t => t.index !== track().index);
+  const ko = others.filter(t => t.eq.state === "failed");
+  el.className = "small";
+  el.classList.toggle("hidden", !(S.multitrack && S.eq.enabled && ko.length));
+  if (!ko.length) { el.textContent = ""; return; }
+  el.classList.add("eq-fail");
+  el.textContent = "⚠ " + ko.map(t => `${t.label} : Match EQ indisponible`).join(" · ")
+    + " — l'export EQ_IR_MIX est bloqué tant que c'est le cas.";
 }
 
 // ---------------------------------------------------------------- Écoute
@@ -388,7 +470,7 @@ function applyMonitor() {
 $("#monitor").addEventListener("input", applyMonitor);
 
 async function loadPcm(kind) {
-  const res = await api("GET", `/api/pcm/${kind}`, undefined, true);
+  const res = await api("GET", `/api/pcm/${kind}?track=${currentTrack}`, undefined, true);
   return { fs: Number(res.headers.get("X-Sample-Rate")), data: new Float32Array(await res.arrayBuffer()) };
 }
 
@@ -432,10 +514,11 @@ function startResult(kind) {
 }
 
 async function loadResultBuffers() {
-  if (!S.render || S.render.stale || player.key === S.render.dependency_key) return;
+  const r = track().render;
+  if (!r || r.stale || player.key === `${currentTrack}:${r.dependency_key}`) return;
   const wasPlaying = player.src && isResultKind(player.kind);
   const pos = currentPos();
-  const needOriginal = !!S.render.eq_applied;
+  const needOriginal = !!r.eq_applied;
   const [dry, wet, original] = await Promise.all([loadPcm("dry"), loadPcm("wet"),
     needOriginal ? loadPcm("original") : Promise.resolve(null)]);
   const mix = { fs: dry.fs, data: new Float32Array(dry.data.length) };
@@ -443,7 +526,7 @@ async function loadResultBuffers() {
   if (isResultKind(player.kind)) stopPlayback();  // l'arrivée d'un rendu ne coupe pas l'écoute d'un import
   player.pcm = original ? { dry, wet, mix, original } : { dry, wet, mix };
   player.bufs = {};
-  player.key = S.render.dependency_key;
+  player.key = `${currentTrack}:${r.dependency_key}`;
   player.pos = Math.min(pos, dry.data.length / dry.fs);
   drawResult();
   if (wasPlaying) startResult(selectedSource());
@@ -473,7 +556,7 @@ $$(".file-card .listen").forEach(btn => {
     try {
       const a = S[slot];
       if (!a) return;
-      const key = a.id + a.channel_mode;
+      const key = a.id + a.channel_mode + ":" + currentTrack;
       const cached = fileBuffers[slot];
       if (!cached || cached.key !== key) fileBuffers[slot] = { key, pcm: await loadPcm(slot), buf: null };
       const ctx = audioCtx();
@@ -536,6 +619,8 @@ async function applyState(st) {
   $("#engineMissing").classList.toggle("hidden", !!S.engine.available);
   $("#engineDetail").textContent = S.engine.detail ? `(${S.engine.detail})` : "";
 
+  renderTracks();
+  $("#commonSettings").classList.toggle("hidden", !S.multitrack);
   renderFiles();
   try { await ensureWave("source"); await ensureWave("destination"); } catch (e) { showError(e); }
   renderStatus();
@@ -544,8 +629,8 @@ async function applyState(st) {
   if (S.last_error) showError(S.last_error);
   else if (S.job.state === "running") showError(null);
 
-  if (S.render && !S.render.stale) { try { await loadResultBuffers(); } catch (e) { showError(e); } }
-  if (!S.render) {
+  if (track().render && !track().render.stale) { try { await loadResultBuffers(); } catch (e) { showError(e); } }
+  if (!track().render) {
     // Ne jamais interrompre l'écoute d'un fichier importé : la page se rafraîchit toutes les 0,8 s
     // pendant l'analyse, seul le transport du résultat est concerné.
     if (isResultKind(player.kind)) stopPlayback();
