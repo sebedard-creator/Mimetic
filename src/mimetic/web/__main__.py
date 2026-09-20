@@ -8,6 +8,7 @@ from pathlib import Path
 
 import uvicorn
 
+from mimetic import __version__
 from mimetic.web.server import create_app, default_data_dir
 
 
@@ -32,7 +33,7 @@ def main() -> None:
     args = ap.parse_args()
 
     app = create_app(args.data_dir, args.export_dir)
-    print(f"Mimetic beta — données : {args.data_dir or default_data_dir()}")
+    print(f"Mimetic {__version__} — données : {args.data_dir or default_data_dir()}")
     print(f"Exports : {app.state.project.export_dir}")
     print(f"Journaux : {default_data_dir().parent / '.engine-logs'}")
     print(f"  http://localhost:{args.port}")

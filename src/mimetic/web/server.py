@@ -1,4 +1,4 @@
-"""Service web local (LAN) de la beta Mimetic — flux en une seule page.
+"""Service web local (LAN) de Mimetic — flux en une seule page.
 
 L'utilisateur fournit deux fichiers :
 - SOURCE : dialogue de tournage, analysé pour estimer l'acoustique ;
@@ -481,7 +481,7 @@ def create_app(data_dir: Path | None = None, export_dir: Path | None = None, eng
                       estimator, capabilities)
     project.reset_dirs()
 
-    app = FastAPI(title="Mimetic beta", version=__version__)
+    app = FastAPI(title="Mimetic", version=__version__)
     app.state.project = project
 
     @app.exception_handler(MimeticError)

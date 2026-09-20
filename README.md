@@ -10,7 +10,7 @@ It runs locally as a small Python web service: open the page from any computer o
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 ![Python 3.11](https://img.shields.io/badge/Python-3.11-blue.svg)
-![Status: beta](https://img.shields.io/badge/Status-beta-orange.svg)
+![Version 1.0](https://img.shields.io/badge/Version-1.0-brightgreen.svg)
 
 ---
 
@@ -113,7 +113,7 @@ From a process manager, point it at the project's own interpreter:
 | Field | Value |
 |---|---|
 | Path | `<project>/.venv/Scripts/python.exe` |
-| Arguments | `run_beta.py` |
+| Arguments | `run.py` |
 | Working directory | `<project>` |
 | Port | `8765` |
 
@@ -140,7 +140,9 @@ WAV, 16/24-bit PCM or 32-bit float, 44.1 or 48 kHz, mono or two channels, up to 
 
 ## Status and limitations
 
-Mimetic is a **beta**, and deliberately explicit about what it knows:
+Version 1.0 does what this page describes, and stays deliberately explicit about what it does **not** know.
+Nothing below is a bug report: these are measured boundaries, and the page and the JSON reports name them
+as they apply.
 
 - **Highs above 7.8 kHz are synthesised, not measured.** On a synthetic full-band pilot, median level error was 1.5–2.3 dB; very absorptive rooms come out darker than reality.
 - **The reverb dosage is not calibrated automatically.** The estimator runs conservative (about 1.5 dB quiet over 18 synthetic cases, and audibly drier than a real boom on the one real pair measured). Two automatic calibrations were built, measured against known truth, and **removed** because they followed speech rhythm instead of reverb: see [docs/eq-validation.md](docs/eq-validation.md). Use the level slider.

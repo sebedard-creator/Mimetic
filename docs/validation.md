@@ -1,4 +1,4 @@
-# Validation — beta 0.1.0b1
+# Validation — 1.0.0
 
 ## Mise à jour 2026-09-20 — Match EQ, exports et robustesse au bruit
 

@@ -1,4 +1,4 @@
-"""Mimetic — matching de réverbération pour ADR (version beta)."""
+"""Mimetic — matching de réverbération pour ADR."""
 
-__version__ = "0.1.0b1"
+__version__ = "1.0.0"
 DSP_VERSION = "dsp-0.1.0"

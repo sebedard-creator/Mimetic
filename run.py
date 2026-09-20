@@ -1,4 +1,4 @@
-"""Lanceur de la beta sans installation : python run_beta.py [--port 8765] [--host 127.0.0.1]."""
+"""Lanceur sans installation : python run.py [--port 8765] [--host 127.0.0.1]."""
 
 import sys
 from pathlib import Path
