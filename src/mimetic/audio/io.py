@@ -40,7 +40,7 @@ def load_wav(path: str | os.PathLike, original_name: str | None = None,
     except Exception as exc:  # libsndfile refuse le contenu, quelle que soit l'extension
         raise MimeticError("INVALID_AUDIO", str(exc)) from exc
 
-    if info.format != "WAV":
+    if info.format not in ("WAV", "WAVEX"):
         raise MimeticError("UNSUPPORTED_FORMAT", f"conteneur {info.format}")
     if info.subtype not in ACCEPTED_SUBTYPES:
         raise MimeticError("UNSUPPORTED_FORMAT", f"sous-type {info.subtype}")

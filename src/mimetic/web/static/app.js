@@ -56,7 +56,7 @@ function send(p) { return p.then(applyState).catch(e => { showError(e); refresh(
 
 // ---------------------------------------------------------------- Fichiers
 const uploading = {};
-$$(".file-card").forEach(card => {
+$$(".file-card[data-slot]").forEach(card => {
   const slot = card.dataset.slot;
   const drop = $(".drop", card), input = $("input[type=file]", card);
   drop.addEventListener("click", () => input.click());
@@ -106,7 +106,7 @@ function fmtAsset(a, slot) {
 }
 
 function renderFiles() {
-  for (const card of $$(".file-card")) {
+  for (const card of $$(".file-card[data-slot]")) {
     const slot = card.dataset.slot, a = S && S[slot];
     card.classList.toggle("loaded", !!a);
     $(".drop-text", card).innerHTML = uploading[slot] ? `Envoi de ${esc(uploading[slot])}…`
@@ -125,6 +125,98 @@ async function ensureWave(slot) {
   if (!a) { delete waves[slot]; return; }
   if (!waves[slot] || waves[slot].id !== a.id) waves[slot] = { id: a.id, ov: await api("GET", `/api/waveform/${slot}`) };
 }
+
+// ---------------------------------------------------------------- Séquences Pro Tools
+let ptxUploading = false, ptxUploadText = "";
+const ptxDownloads = new Set();
+try { JSON.parse(sessionStorage.getItem("mimetic.ptxDownloads") || "[]").forEach(name => ptxDownloads.add(name)); } catch (_) {}
+
+function autoDownloadPtx(name) {
+  if (ptxDownloads.has(name)) return;
+  ptxDownloads.add(name);
+  try { sessionStorage.setItem("mimetic.ptxDownloads", JSON.stringify([...ptxDownloads].slice(-200))); } catch (_) {}
+  const link = document.createElement("a");
+  link.href = `/api/exports/${encodeURIComponent(name)}`;
+  link.download = name;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+function renderPtx() {
+  const p = S && S.ptx;
+  if (!p) return;
+  const running = p.job.state === "running", busy = running || ptxUploading;
+  $("#ptxCard").classList.toggle("loaded", !!p.name);
+  $("#ptxDropText").innerHTML = ptxUploading ? esc(ptxUploadText)
+    : p.name ? "Remplacer le ZIP" : "Déposer le ZIP de la session<br>ou <u>choisir</u>";
+  $("#ptxAsset").innerHTML = p.name ? `<b>${esc(p.name)}</b><br>${p.pairs.length} couple${p.pairs.length > 1 ? 's' : ''} · ${p.total} ADR<br>`
+    + p.pairs.map(pair => `${esc(pair.source)} → ${esc(pair.destination)}`).join("<br>") : "";
+  $("#ptxInput").disabled = busy;
+  $("#ptxDrop").setAttribute("aria-disabled", String(busy));
+  $("#ptxProgress").classList.toggle("hidden", !p.name && !ptxUploading);
+  $("#ptxStatus").textContent = ptxUploading ? ptxUploadText : p.job.state === "cancelled" ? "Calcul annulé."
+    : p.job.state === "failed" ? "Le calcul PTX a échoué." : p.job.step || "En attente…";
+  $("#ptxProgressBar").max = Math.max(1, p.total);
+  $("#ptxProgressBar").value = p.job.completed || 0;
+  const err = p.error || (!p.capabilities.available ? { message:p.capabilities.detail } : null);
+  $("#ptxError").classList.toggle("hidden", !err);
+  $("#ptxError").textContent = err ? `${err.message}${err.detail ? ' — ' + err.detail : ''}` : "";
+  $("#ptxCancel").classList.toggle("hidden", !running);
+  $("#ptxRetry").classList.toggle("hidden", !["failed", "cancelled"].includes(p.job.state));
+  $("#ptxRetry").disabled = busy;
+  $("#ptxNew").classList.toggle("hidden", !p.name || running);
+  $("#ptxNew").disabled = busy;
+  $("#ptxResult").classList.toggle("hidden", !p.export);
+  if (p.export) {
+    $("#ptxSummary").textContent = `${p.export.adr_units} ADR traité${p.export.adr_units > 1 ? 's' : ''} · ${p.export.placements} clips IR/MIX · 6 pistes. Les queues qui se chevauchent sont réunies sans perdre les répliques.`;
+    $("#ptxDownload").href = `/api/exports/${encodeURIComponent(p.export.zip)}`;
+    $("#ptxExportInfo").textContent = `Conservé dans ${p.export.directory}`;
+    const notes = p.export.warnings || [];
+    $("#ptxWarnings").classList.toggle("hidden", !notes.length);
+    $("#ptxWarningsList").innerHTML = notes.map(u => {
+      const labels = u.warnings.map(w => w.startsWith("ROOM_SYNTHETIC_FALLBACK") ? "pièce de secours, estimation indisponible"
+        : w.startsWith("EQ_IDENTITY_FALLBACK") ? "EQ indisponible, correction neutre"
+        : w === "SHORT_REFERENCE_LOW_CONFIDENCE" ? "référence courte, confiance réduite"
+        : w === "EQ_LOW_CONFIDENCE" ? "EQ peu documentée"
+        : (CHIPS[w] && CHIPS[w][0]) || w);
+      return `<li>${esc(u.id)} — ${labels.map(esc).join(" · ")}</li>`;
+    }).join("");
+    if (p.job.state === "ready") autoDownloadPtx(p.export.zip);
+  }
+}
+
+async function uploadPtxZip(file) {
+  if (!file || ptxUploading || (S.ptx && S.ptx.job.state === "running")) return;
+  if (!/\.zip$/i.test(file.name)) { showError({ message:"Déposer un ZIP contenant le PTX et son dossier Audio Files." }); return; }
+  ptxUploading = true;
+  ptxUploadText = `Envoi de ${file.name}…`;
+  showError(null); renderPtx();
+  try {
+    await applyState(await api("POST", `/api/ptx/upload?name=${encodeURIComponent(file.name)}`, file));
+  } catch (error) {
+    showError(error);
+    await refresh().catch(() => {});
+  } finally {
+    ptxUploading = false; ptxUploadText = ""; renderPtx();
+  }
+}
+$("#ptxInput").addEventListener("change", e => {
+  const file = e.target.files[0]; e.target.value = ""; uploadPtxZip(file);
+});
+const ptxDrop = $("#ptxDrop");
+ptxDrop.addEventListener("click", () => { if (ptxDrop.getAttribute("aria-disabled") !== "true") $("#ptxInput").click(); });
+ptxDrop.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); ptxDrop.click(); } });
+ptxDrop.addEventListener("dragover", e => { e.preventDefault(); ptxDrop.classList.add("over"); });
+ptxDrop.addEventListener("dragleave", () => ptxDrop.classList.remove("over"));
+ptxDrop.addEventListener("drop", e => {
+  e.preventDefault(); ptxDrop.classList.remove("over");
+  if (ptxDrop.getAttribute("aria-disabled") === "true") return;
+  if (e.dataTransfer.files.length !== 1) { showError({message:"Déposer un seul ZIP de session."}); return; }
+  uploadPtxZip(e.dataTransfer.files[0]);
+});
+$("#ptxCancel").addEventListener("click", () => send(api("POST", "/api/ptx/cancel")));
+$("#ptxRetry").addEventListener("click", () => { showError(null); send(api("POST", "/api/ptx/retry")); });
+$("#ptxNew").addEventListener("click", () => { showError(null); send(api("POST", "/api/ptx/new")); });
 
 // ---------------------------------------------------------------- Dessin
 function css(v) { return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
@@ -274,7 +366,7 @@ function schedulePoll() {
   // Une seule piste en retard suffit à garder la page en attente : les exports les prennent ensemble.
   const pending = S.source && S.destination &&
     (S.job.state === "running" || (S.job.state === "idle" && !allRendered()));
-  if (pending) pollTimer = setTimeout(() => refresh().catch(showError), 800);
+  if (pending || (S.ptx && S.ptx.job.state === "running")) pollTimer = setTimeout(() => refresh().catch(showError), 800);
 }
 
 // ---------------------------------------------------------------- Résultat
@@ -622,6 +714,7 @@ async function applyState(st) {
   renderTracks();
   $("#commonSettings").classList.toggle("hidden", !S.multitrack);
   renderFiles();
+  renderPtx();
   try { await ensureWave("source"); await ensureWave("destination"); } catch (e) { showError(e); }
   renderStatus();
   renderResult();

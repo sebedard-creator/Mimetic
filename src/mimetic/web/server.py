@@ -37,6 +37,7 @@ from mimetic.domain.models import (
     RoomProfile,
 )
 from mimetic.engines.recrir import adapter as recrir
+from mimetic.web.ptx import PtxProject, MAX_MEDIA_BYTES
 
 STATIC_DIR = Path(__file__).parent / "static"
 MAX_UPLOAD_BYTES = 256 * 1024**2
@@ -83,6 +84,7 @@ class Project:
         self.last_error: dict | None = None
         self.worker_thread: threading.Thread | None = None
         self.cancel_requested = False
+        self.ptx = PtxProject(self)
 
     def clear_session(self) -> None:
         """Vide les deux fichiers et tout ce qui en dépend. N'efface ni les exports ni les réglages.
@@ -91,6 +93,7 @@ class Project:
         avec l'ancienne DESTINATION, avant même d'avoir eu le temps de la remplacer.
         """
         self.cancel()
+        self.ptx.reset()
         with self.lock:
             for slot in SLOTS:
                 asset = self.assets[slot]
@@ -119,11 +122,21 @@ class Project:
         total = 0
         for d in (self.upload_dir, self.work_dir):
             if d.exists():
-                total += sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
+                for f in d.rglob("*"):
+                    try:
+                        if f.is_file():
+                            total += f.stat().st_size
+                    except FileNotFoundError:
+                        # A completed/cancelled job can remove its work files
+                        # between this directory scan and stat().
+                        continue
         return total
 
     def export_stats(self) -> dict:
         files = [f for f in self.export_dir.glob("*") if f.is_file()] if self.export_dir.exists() else []
+        for directory in self.export_dir.glob("Mimetic_PTX_*"):
+            if directory.is_dir() and directory.resolve().parent == self.export_dir.resolve():
+                files.extend(f for f in directory.rglob("*") if f.is_file())
         return {"count": len(files), "bytes": sum(f.stat().st_size for f in files)}
 
     def delete_exports(self) -> dict:
@@ -132,6 +145,8 @@ class Project:
         for f in self.export_dir.glob("*"):
             if f.is_file():
                 f.unlink(missing_ok=True)
+            elif f.name.startswith("Mimetic_PTX_") and f.resolve().parent == self.export_dir.resolve():
+                shutil.rmtree(f)
         self.export_dir.mkdir(parents=True, exist_ok=True)
         return stats
 
@@ -224,6 +239,8 @@ class Project:
     def kick(self) -> None:
         """Lance le job si du travail reste à faire et qu'aucun job ne tourne ; sinon il reprendra la main."""
         with self.lock:
+            if self.ptx.running():
+                return
             if self.worker_thread is not None and self.worker_thread.is_alive():
                 return
             if self.assets["source"] is None or self.assets["destination"] is None:
@@ -377,6 +394,7 @@ class Project:
         self.cancel_requested = True
         self.client.cancelled = True
         self.client.stop()
+        self.ptx.cancel()
 
     # --- état --------------------------------------------------------------------------------
 
@@ -449,6 +467,7 @@ class Project:
             "last_export": self.last_export, "export_dir": str(self.export_dir),
             "cache_bytes": self.cache_bytes(), "data_dir": str(self.data_dir),
             "exports": self.export_stats(),
+            "ptx": self.ptx.snapshot(),
         })
 
 
@@ -476,8 +495,8 @@ def _num(payload: dict, key: str, default):
 
 def create_app(data_dir: Path | None = None, export_dir: Path | None = None, engine_root: Path | None = None,
                estimator: Callable | None = None, capabilities: Callable | None = None) -> FastAPI:
-    data_dir = data_dir or default_data_dir()
-    project = Project(data_dir, export_dir or data_dir / "exports", engine_root or recrir.PROJECT_ROOT,
+    data_dir = (data_dir or default_data_dir()).resolve()
+    project = Project(data_dir, (export_dir or data_dir / "exports").resolve(), engine_root or recrir.PROJECT_ROOT,
                       estimator, capabilities)
     project.reset_dirs()
 
@@ -606,11 +625,58 @@ def create_app(data_dir: Path | None = None, export_dir: Path | None = None, eng
         with project.lock:
             return project.snapshot()
 
+    async def ptx_upload_body(request: Request):
+        path = project.upload_dir / f"{uuid.uuid4().hex}.ptx_upload"
+        count = 0
+        try:
+            with path.open("wb") as stream:
+                async for chunk in request.stream():
+                    count += len(chunk)
+                    if count > MAX_MEDIA_BYTES:
+                        raise MimeticError("LIMIT_EXCEEDED", "Import PTX : 2 Go par fichier maximum.")
+                    stream.write(chunk)
+            if count == 0:
+                raise MimeticError("PTX_UNSUPPORTED", "Fichier vide.")
+            return path
+        except BaseException:
+            path.unlink(missing_ok=True)
+            raise
+
+    @app.post("/api/ptx/upload")
+    async def upload_ptx(request: Request, name: str = "session.ptx"):
+        path = await ptx_upload_body(request)
+        try:
+            await run_in_threadpool(project.ptx.ingest, path, os.path.basename(name.replace("\\", "/"))[:200])
+            with project.lock:
+                return project.snapshot()
+        finally:
+            path.unlink(missing_ok=True)
+
+    @app.post("/api/ptx/cancel")
+    def cancel_ptx():
+        project.ptx.cancel()
+        with project.lock:
+            return project.snapshot()
+
+    @app.post("/api/ptx/retry")
+    def retry_ptx():
+        with project.lock:
+            project.ptx.start_if_ready()
+            return project.snapshot()
+
+    @app.post("/api/ptx/new")
+    def new_ptx():
+        project.ptx.reset()
+        project.kick()
+        with project.lock:
+            return project.snapshot()
+
     @app.post("/api/cache/clear")
     def clear_cache():
         """Vide les fichiers importés, les fichiers de travail **et les exports**, puis réinitialise la session."""
         project.cancel()
         with project.lock:
+            project.ptx.reset()
             freed = project.cache_bytes()
             exports = project.delete_exports()
             for slot in SLOTS:
@@ -693,7 +759,7 @@ def create_app(data_dir: Path | None = None, export_dir: Path | None = None, eng
     def download(filename: str):
         root = project.export_dir.resolve()
         target = (root / filename).resolve()
-        if target.parent != root or not target.is_file() or target.suffix not in (".wav", ".json"):
+        if target.parent != root or not target.is_file() or target.suffix not in (".wav", ".json", ".zip"):
             raise MimeticError("INVALID_PARAMETER", "fichier introuvable")
         return FileResponse(target, filename=target.name)
 

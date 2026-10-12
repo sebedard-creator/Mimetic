@@ -6,17 +6,18 @@ Chameleon-like direct-sound IR analysis and regeneration for ADR recordings.
 
 It runs locally as a small Python web service: open the page from any computer on your LAN. Nothing is uploaded anywhere; all processing happens on the machine that runs it.
 
-![Mimetic main page](docs/images/screenshot.png)
+![Mimetic main page](docs/images/mimetic-v1.5.jpg)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 ![Python 3.11](https://img.shields.io/badge/Python-3.11-blue.svg)
-![Version 1.0](https://img.shields.io/badge/Version-1.0-brightgreen.svg)
+![Version 1.5](https://img.shields.io/badge/Version-1.5-brightgreen.svg)
 
 ---
 
 ## Highlights
 
 - **Two files in, finished stems out.** Drop the production take and the ADR take; room analysis, tone matching and rendering all run automatically.
+- **Pro Tools sequences.** Drop one ZIP containing a PTX and its Audio Files folder in the third box. Up to three reference/ADR track pairs are processed automatically and returned in one PTX, at their original sample positions.
 - **Room *and* tone.** Beyond the reverb, Match EQ aligns the ADR's colour — mic, proximity, presence — with the production recording.
 - **Wet only, never the voice.** The reverb export contains reflections and tail only — no trace of the production dialogue's words or noise.
 - **Sample-accurate placement.** The stem starts exactly where the ADR file starts, so it lines up by simply aligning the file heads.
@@ -30,7 +31,7 @@ It runs locally as a small Python web service: open the page from any computer o
 ## Workflow
 
 1. **SOURCE** — drop the production dialogue. It is used only to analyse the room; its audio never reaches the output.
-2. **DESTINATION** — drop the dry ADR line. It receives the reverb and is never altered.
+2. **DESTINATION** — drop the dry ADR line. Its original file stays untouched; Match EQ can produce a tone-corrected render.
 3. **Automatic processing** — room analysis (up to three 6-second passages among the most active parts of the source, about 30 s of CPU time each, cancellable), then tone matching, then the render. Every step is cancellable and nothing needs a second click.
 4. **Audition** — original ADR / processed ADR / reverb only / full mix, with a shared playhead, plus separate players for the two imported files. The monitoring level never affects the export.
 5. **Adjust** — reverb level, extra pre-delay and Match EQ strength; each re-renders on the fly.
@@ -43,6 +44,28 @@ Changing the destination or a setting re-renders only. Changing the source re-ru
 **Nouveau duo** (*new pair*), next to the status line, empties both slots so you can chain another couple without the analysis firing on a half-replaced pair. Exports and settings are kept.
 
 **Delete Cache** (top right) resets everything after a confirmation dialog: imported files, current room profile, rendered stem, working files **and the exported files** in `data/exports`. Your own source files on disk are never touched.
+
+### Pro Tools — box 3, PTX
+
+Drop **one ZIP** containing the normal session hierarchy:
+
+```text
+My_sequence.zip
+  My_sequence.ptx
+  Audio Files/
+    dialogue.wav
+    ADR.wav
+```
+
+A wrapping session folder is also accepted. Session File Backups and WaveCache files are ignored. The ZIP must contain one main PTX and all the WAVs it references, inside its sibling `Audio Files` folder.
+
+Processing starts automatically. Odd-numbered audio tracks are references; even-numbered tracks are ADR, regardless of their names. Version 1.5 handles up to three mono pairs in 48 kHz / 23.976 sessions, with consolidated clips, no fades/groups, and unique matching reference/ADR start positions. Reference and ADR lengths can differ; complete ADRs and their reverb tails are retained. Very short ADRs are rendered; if the room or EQ cannot be estimated, a clearly reported conservative room or neutral EQ is used. Missing/invalid media remain import errors.
+
+The ZIP **downloads automatically as soon as processing finishes**, once per export. The **Télécharger à nouveau** button remains available. It contains a self-contained session, its Audio Files and a JSON report. All MIX clips are muted; IR clips are active with **+3.5 dB Clip Gain**, stored in the PTX rather than baked into the WAVs. The six-track native template and its silent prototype WAV are bundled, including in the installation package; unused pairs stay empty. Overlapping tails are summed into contiguous islands. PTX mode uses the validated settings: Match EQ 100 %, additional wet gain 0 dB and additional pre-delay 0 ms. Input plugins, automation and mix gains are not bounced: consolidate the audio you want Mimetic to process first.
+
+![Mimetic v1.5 — completed Pro Tools sequence and automatic ZIP download](docs/images/mimetic-v1.5-ptx.jpg)
+
+The normal SOURCE/DESTINATION WAV workflow remains available. Native PTX support uses [pt_api](https://github.com/sebedard-creator/pt_api), pinned to 1.6.3 (LGPL-2.1-or-later). Implementation and validation: [docs/ptx-v1.5.md](docs/ptx-v1.5.md).
 
 ### What you get
 
@@ -140,7 +163,7 @@ WAV, 16/24-bit PCM or 32-bit float, 44.1 or 48 kHz, mono or two channels, up to 
 
 ## Status and limitations
 
-Version 1.0 does what this page describes, and stays deliberately explicit about what it does **not** know.
+Version 1.5 does what this page describes, and stays deliberately explicit about what it does **not** know.
 Nothing below is a bug report: these are measured boundaries, and the page and the JSON reports name them
 as they apply.
 

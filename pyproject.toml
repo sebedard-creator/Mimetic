@@ -1,13 +1,14 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "mimetic"
-version = "1.0.0"
+version = "1.5.0"
 description = "Mimetic : rendu de réverbération wet parallèle pour ADR, servi sur le LAN"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Sébastien Bédard" }]
 # Versions testées sur la machine de développement (Python 3.11.9, Windows 10).
 dependencies = [
@@ -16,6 +17,7 @@ dependencies = [
   "soundfile==0.12.1",
   "fastapi==0.111.0",
   "uvicorn==0.30.1",
+  "pt_api @ git+https://github.com/sebedard-creator/pt_api.git@c31147bf427e763f7be900e6077368b615d47e24",
 ]
 
 [project.optional-dependencies]
@@ -26,6 +28,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "mimetic.web" = ["static/*"]
+"mimetic" = ["resources/*.ptx", "resources/Audio Files/Mimetic_Prototype_Float32_TC_60s.wav", "resources/README.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

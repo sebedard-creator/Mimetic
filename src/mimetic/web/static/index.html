@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Mimetic v1.0</title>
-<link rel="stylesheet" href="/static/app.css?v=11">
+<title>Mimetic v1.5</title>
+<link rel="stylesheet" href="/static/app.css?v=15.1">
 </head>
 <body>
 <header class="top">
-  <div class="brand">MIMETIC <span class="badge ver">v1.0</span></div>
+  <div class="brand">MIMETIC <span class="badge ver">v1.5</span></div>
   <div class="top-right">
     <button id="clearCache" class="btn danger">Delete Cache</button>
   </div>
@@ -18,7 +18,7 @@
   <h2>Vider le cache ?</h2>
   <p>Seront supprimés :</p>
   <ul>
-    <li>les fichiers <strong>SOURCE</strong> et <strong>DESTINATION</strong> importés ;</li>
+    <li>les fichiers <strong>SOURCE</strong>, <strong>DESTINATION</strong> et les séquences <strong>PTX</strong> importés ;</li>
     <li>l'analyse en cours, le profil de pièce et la reverb calculée ;</li>
     <li>les fichiers de travail temporaires <span id="cacheSize" class="muted"></span>.</li>
   </ul>
@@ -75,6 +75,36 @@
       <canvas class="wave hidden" height="56"></canvas>
       <button class="btn small-btn listen hidden">▶ Écouter</button>
     </div>
+    <div class="file-card ptx-card" id="ptxCard">
+      <div class="file-head"><span class="step-no">3</span><div><h2>PTX</h2><p class="muted small">Déposer une séquence Pro Tools</p></div></div>
+      <p class="hint no-margin">Pistes impaires : SOURCE. Pistes paires : DESTINATION. Jusqu'à <strong>3 couples</strong>, en mono, 48 kHz / 23,976.</p>
+      <div class="drop" id="ptxDrop" role="button" tabindex="0" aria-label="Déposer ou choisir une séquence Pro Tools">
+        <input id="ptxInput" type="file" accept=".zip,application/zip" hidden>
+        <span id="ptxDropText">Déposer le ZIP de la session<br>ou <u>choisir</u></span>
+      </div>
+      <p class="hint no-margin">Le ZIP contient le <strong>.ptx</strong> et son dossier <strong>Audio Files</strong>.</p>
+      <div id="ptxAsset" class="asset-info"></div>
+      <div id="ptxProgress" class="hidden" aria-live="polite">
+        <p id="ptxStatus" class="small"></p>
+        <progress id="ptxProgressBar" max="1" value="0"></progress>
+      </div>
+      <div id="ptxError" class="small eq-fail hidden" role="alert"></div>
+      <div class="ptx-actions">
+        <button id="ptxCancel" class="btn small-btn hidden">Annuler</button>
+        <button id="ptxRetry" class="btn small-btn hidden">Relancer</button>
+        <button id="ptxNew" class="btn small-btn hidden">Nouvelle séquence</button>
+      </div>
+      <p class="hint no-margin">Rendu automatique : Match EQ actif, MIX mutés, Clip Gain des IR <strong>+3,5 dB</strong>. Débuts et queues conservés.</p>
+    </div>
+  </section>
+
+  <section id="ptxResult" class="card hidden" aria-live="polite">
+    <h2>Session Pro Tools prête</h2>
+    <p id="ptxSummary" class="small"></p>
+    <a id="ptxDownload" class="btn primary" download>Télécharger à nouveau</a>
+    <p class="hint">Le ZIP se télécharge automatiquement à la fin du traitement. Décompresser, puis ouvrir le PTX avec son dossier Audio Files. Les MIX sont mutés ; les IR sont actifs à +3,5 dB de Clip Gain.</p>
+    <p id="ptxExportInfo" class="small muted"></p>
+    <details id="ptxWarnings" class="hidden"><summary class="small">Indications de qualité</summary><ul id="ptxWarningsList" class="small muted"></ul></details>
   </section>
 
   <section id="status" class="status hidden">
@@ -93,7 +123,7 @@
 
   <section id="result" class="card hidden">
     <div class="result-head">
-      <h2><span class="step-no">3</span> Reverb</h2>
+      <h2>Reverb</h2>
       <span id="staleBadge" class="badge stale hidden">RECALCUL…</span>
       <div id="trackTabs" class="seg track-tabs hidden" role="radiogroup"></div>
       <span class="spacer"></span>
@@ -171,7 +201,7 @@
 
 <footer class="credit">Conçu par Sébastien Bédard</footer>
 
-<script src="/static/app.js?v=11"></script>
+<script src="/static/app.js?v=15.1"></script>
 </body>
 </html>
 

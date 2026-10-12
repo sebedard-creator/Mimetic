@@ -123,15 +123,16 @@ def activity_profile(x: np.ndarray, fs: int) -> np.ndarray:
     return e >= peak * 10 ** (-ACTIVITY_RANGE_DB / 10)
 
 
-def select_windows(x: np.ndarray, fs: int) -> tuple[list[tuple[int, int]], list[float]]:
+def select_windows(x: np.ndarray, fs: int, *, minimum_seconds: float | None = None) -> tuple[list[tuple[int, int]], list[float]]:
     """Choisit jusqu'à 3 fenêtres de 6 s sans recouvrement parmi les plus actives du fichier source.
 
     Les fenêtres gardent pauses et queues (aucune concaténation de segments parlés, §6.2).
     Retourne (fenêtres en indices à fs, taux d'activité de chacune), triées dans le temps.
     """
     total = x.size / fs
-    if total < MIN_WINDOW_SECONDS:
-        raise MimeticError("INSUFFICIENT_SPEECH", f"source de {total:.2f} s < {MIN_WINDOW_SECONDS:.0f} s")
+    minimum = MIN_WINDOW_SECONDS if minimum_seconds is None else minimum_seconds
+    if total < minimum:
+        raise MimeticError("INSUFFICIENT_SPEECH", f"source de {total:.2f} s < {minimum:.3f} s")
     act = activity_profile(x, fs)
     k = max(1, int(ACTIVITY_FRAME_S * fs))
     if total <= WINDOW_SECONDS:
@@ -300,7 +301,7 @@ class WorkerClient:
 
 def estimate_profile(signal: np.ndarray, fs: int, *, workdir: Path, client: WorkerClient,
                      reference_meta: dict, progress=lambda step: None,
-                     policy: DirectPolicy = DEFAULT_POLICY) -> RoomProfile:
+                     policy: DirectPolicy = DEFAULT_POLICY, minimum_seconds: float | None = None) -> RoomProfile:
     """Sélection mono à fs → fenêtres 16 kHz → inférence → canonicalisation → médoïde → RoomProfile."""
     import soundfile as sf
 
@@ -310,7 +311,7 @@ def estimate_profile(signal: np.ndarray, fs: int, *, workdir: Path, client: Work
     x = np.asarray(signal, dtype=np.float64)
     if not np.any(x):
         raise MimeticError("EMPTY_REFERENCE", "sélection silencieuse")
-    windows, activity = select_windows(x, fs)
+    windows, activity = select_windows(x, fs, minimum_seconds=minimum_seconds)
     workdir.mkdir(parents=True, exist_ok=True)
     results = []
     for i, (s, e) in enumerate(windows):

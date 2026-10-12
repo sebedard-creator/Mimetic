@@ -8,6 +8,7 @@ scipy==1.13.1
 soundfile==0.12.1
 fastapi==0.111.0
 uvicorn==0.30.1
+pt_api @ git+https://github.com/sebedard-creator/pt_api.git@c31147bf427e763f7be900e6077368b615d47e24
 
 # Tests (optionnel)
 pytest==9.1.1

@@ -3,6 +3,12 @@
 from __future__ import annotations
 
 MESSAGES_FR = {
+    "PTX_UNAVAILABLE": "Intégration Pro Tools indisponible.",
+    "PTX_UNSUPPORTED": "Séquence Pro Tools non prise en charge.",
+    "PTX_PAIRING": "Appariement SOURCE / DESTINATION ambigu.",
+    "PTX_MEDIA_MISSING": "Média audio PTX manquant.",
+    "PTX_EXPORT_FAILED": "L'export Pro Tools a échoué.",
+    "PTX_BUSY": "Un calcul est déjà en cours.",
     "INVALID_AUDIO": "Fichier audio invalide ou corrompu.",
     "UNSUPPORTED_FORMAT": "Format non pris en charge : WAV PCM 16/24 bits ou flottant 32 bits, 44,1 ou 48 kHz, mono ou 2 canaux.",
     "LIMIT_EXCEEDED": "Le fichier dépasse une limite configurée.",
