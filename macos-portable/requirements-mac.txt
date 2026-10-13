@@ -1,0 +1,17 @@
+# Runtime selected for Python 3.11, Intel, macOS Monterey.
+# NumPy 1.x is deliberate: the Intel PyTorch 2.2 wheels predate NumPy 2.
+numpy==1.26.4
+scipy==1.13.1
+soundfile==0.12.1
+cffi==1.17.1
+pycparser==2.22
+torch==2.2.2
+filelock==3.16.1
+typing_extensions==4.12.2
+sympy==1.13.1
+mpmath==1.3.0
+networkx==3.2.1
+jinja2==3.1.6
+markupsafe==2.1.5
+fsspec==2024.10.0
+# pt_api 1.6.3 source and licences are included in payload; no runtime git/pip.

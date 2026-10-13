@@ -1,0 +1,17 @@
+{
+  "input": "mimetic_portable.selftest.synthetic_input, 2 seconds at 16kHz; no production audio",
+  "source": "validated Windows CPU environment",
+  "diagnostics": {
+    "ctf_frames": 60,
+    "ctf_horizon_seconds": 0.96,
+    "input_scale": 0.21030262112617493,
+    "raw_length": 279295,
+    "raw_global_peak_index": 132095,
+    "model_load_seconds": 0.3703504000004614,
+    "inference_seconds": 10.32562930000131,
+    "input_seconds": 2.0,
+    "torch": "2.14.0+cpu",
+    "threads": 12
+  },
+  "relative_l2_tolerance": 0.002
+}

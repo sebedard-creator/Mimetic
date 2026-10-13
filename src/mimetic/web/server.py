@@ -121,8 +121,10 @@ class Project:
         """Taille des fichiers importés et des fichiers de travail (hors exports)."""
         total = 0
         for d in (self.upload_dir, self.work_dir):
-            if d.exists():
-                for f in d.rglob("*"):
+            # os.walk tolerates a job directory disappearing during traversal.
+            for directory, _, filenames in os.walk(d):
+                for filename in filenames:
+                    f = Path(directory) / filename
                     try:
                         if f.is_file():
                             total += f.stat().st_size

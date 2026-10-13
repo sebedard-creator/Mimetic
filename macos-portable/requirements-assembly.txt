@@ -1,0 +1,3 @@
+# Windows assembly tooling; audio and GUI wheels are downloaded for macOS.
+Pillow==11.1.0
+packaging==24.2

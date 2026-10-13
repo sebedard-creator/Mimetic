@@ -2,3 +2,6 @@
 * text=auto
 *.ptx binary
 *.wav binary
+*.command text eol=lf
+macos-portable/validation/*.npy binary
+macos-portable/releases/*.zip filter=lfs diff=lfs merge=lfs -text

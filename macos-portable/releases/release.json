@@ -1,0 +1,16 @@
+{
+  "filename": "Mimetic-Mac-Intel-Monterey.zip",
+  "version": "1.5.0",
+  "build": "1506",
+  "bytes": 284136097,
+  "sha256": "69ee9eee36c97bc1777aa7463cb02a880f30eed4d92a308d8b9254839f5a5e07",
+  "contents": "Mimetic.app only",
+  "target": "Intel macOS Monterey 12.7.6",
+  "python": "3.11.10",
+  "gui": "native AppKit via PyObjC 10.3.2",
+  "native_binaries_checked": 178,
+  "code_pages_checked": 231202,
+  "resource_hashes_checked": 17524,
+  "signature": "ad hoc; native Apple signing needed on the target Mac",
+  "native_validation": "build 1504 startup confirmed on Intel Monterey; current build needs target validation"
+}

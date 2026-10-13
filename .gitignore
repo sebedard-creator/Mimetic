@@ -40,3 +40,11 @@ desktop.ini
 !tests/fixtures/*.wav
 # Seul média livré : prototype silencieux du template Pro Tools.
 !src/mimetic/resources/Audio Files/Mimetic_Prototype_Float32_TC_60s.wav
+
+# Les sources Mac et releases sont versionnées; les snapshots et essais restent locaux.
+/macos-portable/.test-venv/
+/macos-portable/.build-venv/
+/macos-portable/payload/
+/macos-portable/transfer/
+# IR de contrôle issue d'une entrée synthétique, sans dialogue de production.
+!macos-portable/validation/engine_baseline.npy
