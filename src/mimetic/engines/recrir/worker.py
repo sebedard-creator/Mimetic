@@ -76,19 +76,27 @@ class Engine:
         self.model.load_state_dict(state, strict=True)
         self.model.eval()
         self.pim = PIM(sr=NATIVE_SR)
+        self._sweep_frames = None
+        self._sweep_windows = None
+        self._inverse_filter = self.pim.invfilter.double().numpy()
 
     @torch.no_grad()
     def estimate(self, wav: np.ndarray) -> tuple[np.ndarray, dict]:
         """Reprend PIM.process sans ses deux post-traitements destructifs :
         ni découpe au maximum global − 2,5 ms, ni normalisation au pic ; la sortie complète est rendue."""
         x = torch.from_numpy(np.ascontiguousarray(wav, dtype=np.float32))
+        neural_start = time.perf_counter()
         ctf = self.pim.init_seg(self.TF, self.model, x)   # normalisation d'amplitude + réseau + flip
+        neural_seconds = time.perf_counter() - neural_start
+        post_start = time.perf_counter()
         L = ctf.shape[-1]
-        sweep_spec = self.TF.stft(self.pim.sinesweep, "complex")
-        sweep_spec = torch.nn.functional.pad(sweep_spec, (L - 1, L - 1)).unfold(1, L, 1)
-        ir_spec = torch.matmul(sweep_spec, ctf.unsqueeze(2)).squeeze()
+        if self._sweep_frames != L:
+            sweep_spec = self.TF.stft(self.pim.sinesweep, "complex")
+            self._sweep_windows = torch.nn.functional.pad(sweep_spec, (L - 1, L - 1)).unfold(1, L, 1)
+            self._sweep_frames = L
+        ir_spec = torch.matmul(self._sweep_windows, ctf.unsqueeze(2)).squeeze()
         ir = self.TF.istft(ir_spec, "complex")
-        rir = sps.fftconvolve(self.pim.invfilter.double().numpy(), ir.double().numpy(), mode="full")
+        rir = sps.fftconvolve(self._inverse_filter, ir.double().numpy(), mode="full")
         peak = int(np.argmax(np.abs(rir)))
         diag = {
             "ctf_frames": int(L),
@@ -96,6 +104,8 @@ class Engine:
             "input_scale": float(self.TF.ori_scale),
             "raw_length": int(rir.size),
             "raw_global_peak_index": peak,
+            "neural_seconds": neural_seconds,
+            "postprocess_seconds": time.perf_counter() - post_start,
         }
         return rir, diag
 
@@ -137,6 +147,8 @@ def main() -> None:
             diag.update({"model_load_seconds": load_s, "inference_seconds": time.perf_counter() - t1,
                          "input_seconds": wav.size / NATIVE_SR, "torch": torch.__version__,
                          "threads": torch.get_num_threads()})
+            if hasattr(engine, "cpu_policy"):
+                diag["cpu_policy"] = engine.cpu_policy
             tmp = req["output_npy"] + ".tmp.npy"
             np.save(tmp, rir, allow_pickle=False)
             os.replace(tmp, req["output_npy"])

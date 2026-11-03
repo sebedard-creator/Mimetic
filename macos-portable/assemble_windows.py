@@ -217,7 +217,7 @@ def main(reuse=None):
     info = {
         "CFBundleExecutable": "Mimetic", "CFBundleName": "Mimetic", "CFBundleDisplayName": "Mimetic",
         "CFBundleIdentifier": "com.sebedard.mimetic.portable", "CFBundlePackageType": "APPL",
-        "CFBundleInfoDictionaryVersion": "6.0", "CFBundleShortVersionString": "1.5.0", "CFBundleVersion": "1506",
+        "CFBundleInfoDictionaryVersion": "6.0", "CFBundleShortVersionString": "1.5.1", "CFBundleVersion": "1508",
         "CFBundleIconFile": "Mimetic.icns", "CFBundleDevelopmentRegion": "fr", "LSMinimumSystemVersion": "12.0",
         "NSHighResolutionCapable": True, "NSPrincipalClass": "NSApplication",
         "NSHumanReadableCopyright": "© 2026 Sébastien Bédard",

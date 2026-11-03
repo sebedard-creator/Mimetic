@@ -14,7 +14,8 @@ les contrôles Windows sans importer `mimetic_macos` ni PyObjC.
 Le payload est un snapshot **généré et ignoré par Git** du cœur, des composants
 tiers et des ressources. `prepare_snapshot.py` produit un manifeste SHA256 des
 fichiers et des sources originales. L'adaptation du cœur ne touche que les
-chemins du runtime, le lancement du worker et la fermeture de ses handles.
+chemins du runtime, le lancement du worker, la fermeture de ses handles et
+la configuration du nombre de threads CPU.
 Le DSP, l'analyse EQ et la construction PTX restent ceux de `src/mimetic`.
 
 ## Lanceur et runtime
@@ -61,6 +62,34 @@ Le ZIP est d'abord construit dans un dossier temporaire sur le volume de
 destination. macOS le publie avec `renamex_np(RENAME_EXCL)` : il apparaît complet,
 sans écraser un résultat existant. Les noms suivants utilisent `_02`, `_03`, etc.
 Une erreur ou annulation ne publie pas de ZIP partiel.
+
+## Performance et conservation du rendu — build 1507
+
+Le worker conserve le modèle, ses poids, la précision FP32 et la récurrence
+Mamba d'origine. Toutes les fenêtres d'analyse, la sélection de l'IR, le DSP
+EQ, la synthèse des hautes fréquences et les queues restent identiques.
+Il n'y a ni quantification, ni diminution du taux d'échantillonnage, ni mode
+de qualité réduit.
+
+`mimetic_portable/cpu_runtime.py` mesure la récurrence d'origine avec 1, 2, 4
+et 8 threads, limités aux processeurs disponibles. Une courte séquence de la
+forme réelle du modèle sert à cette calibration; elle ne prédit pas exactement
+le temps de tout le réseau. Chaque candidat doit également passer un contrôle
+d'accord numérique. Le meilleur temps médian est conservé par version de
+politique, CPU, OS et Torch dans `~/Library/Caches/Mimetic`. Le générateur
+aléatoire de calibration est local et ne modifie pas celui du modèle.
+Le service web garde sa politique de threads existante.
+
+Le moteur réutilise le filtre inverse fixe et les fenêtres STFT du sweep
+quand la longueur de CTF est identique; un changement de longueur recalcule
+ces fenêtres. Le worker reste chargé pour tous les ADR d'un ZIP, comme avant.
+
+Le rapport conserve les temps d'import, d'analyse/EQ/rendu et d'assemblage
+PTX; les diagnostics des fenêtres séparent réseau et post-traitement et
+indiquent le réglage CPU choisi. L'événement `ready` et la fenêtre indiquent
+la durée totale, ZIP compris. Changer le parallélisme peut produire de minuscules
+écarts d'arrondi : l'identité bit à bit n'est pas garantie. Les comparaisons
+audio et PTX sont documentées dans [VALIDATION.md](VALIDATION.md).
 
 ## Assemblage et distribution
 

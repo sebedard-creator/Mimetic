@@ -6,6 +6,7 @@ import json
 import os
 import tempfile
 import threading
+import time
 import uuid
 import zipfile
 from pathlib import Path
@@ -53,6 +54,7 @@ class Job:
         self.emit({"event": "progress", "step": step, "completed": completed, "total": self.total})
 
     def run(self, input_path: Path, output_dir: Path | None = None) -> Path:
+        started = time.perf_counter()
         input_path = input_path.expanduser().resolve(strict=True)
         output_dir = (output_dir or input_path.parent).expanduser().resolve(strict=True)
         if not output_dir.is_dir():
@@ -74,20 +76,29 @@ class Job:
                 if missing:
                     raise MimeticError("PTX_MEDIA_MISSING", "Audio Files : " + ", ".join(missing[:12]))
                 pro_tools.validate_media(plan, media)
+                imported = time.perf_counter()
                 self.total = len(plan["units"])
                 self.emit({"event": "plan", "session": source_name, "pairs": plan["pairs"], "total": self.total})
                 render = work / "render"
                 render.mkdir()
                 units = pro_tools.render_units(plan, media, render, estimator=self.estimator,
                                               client=self.client, progress=self.progress, check_cancel=self.check_cancel)
+                rendered = time.perf_counter()
                 self.progress("Assemblage et vérification du PTX", self.total)
                 stem = input_path.stem
                 name = "Mimetic_PTX_" + uuid.uuid4().hex[:12]
                 bundle = work / name
                 report = pro_tools.package_units(units, render, bundle, name, self.check_cancel)
+                packaged = time.perf_counter()
                 report["portable"] = {"version": PORTABLE_VERSION, "target": "macOS 12 Intel",
                                       "input_zip_name": input_path.name,
                                       "audio_processing": "same Mimetic 1.5 DSP; CPU engine; offline"}
+                report["portable"]["timings"] = {
+                    "import_and_validation_seconds": imported - started,
+                    "analysis_eq_render_seconds": rendered - imported,
+                    "ptx_assembly_validation_seconds": packaged - rendered,
+                    "before_zip_seconds": packaged - started,
+                }
                 (bundle / "Mimetic_report.json").write_text(json.dumps(json_safe(report), ensure_ascii=False, indent=2), encoding="utf-8")
                 self.progress("Création du ZIP", self.total)
                 staged = work / "result.zip"
@@ -120,7 +131,8 @@ class Job:
                     raise MimeticError("PTX_EXPORT_FAILED", "Trop de résultats du même nom.")
                 warnings = [{"id": u["id"], "warnings": u["warnings"]} for u in units if u["warnings"]]
                 self.emit({"event": "ready", "path": str(target), "total": self.total,
-                           "placements": len(report["placements"]), "warnings": warnings})
+                           "placements": len(report["placements"]), "warnings": warnings,
+                           "elapsed_seconds": time.perf_counter() - started})
                 return target
         finally:
             self.client.stop()

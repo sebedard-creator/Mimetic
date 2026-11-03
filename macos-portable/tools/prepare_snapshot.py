@@ -119,6 +119,15 @@ def prepare(project: Path, api_source: Path, api_repo: Path, engine: Path | None
             self._stderr = None
 ''' + content[end:]
     adapter.write_text(content, encoding="utf-8", newline="\n")
+    worker = mimetic / "engines" / "recrir" / "worker.py"
+    content = worker.read_text(encoding="utf-8")
+    original_threads = "        torch.set_num_threads(max(1, os.cpu_count() or 1))"
+    if content.count(original_threads) != 1:
+        raise ValueError("Point de configuration CPU du worker non reconnu")
+    content = content.replace(original_threads,
+        "        from mimetic_portable.cpu_runtime import configure\n"
+        "        self.cpu_policy = configure()")
+    worker.write_text(content, encoding="utf-8", newline="\n")
     for folder in ("model", "acoustics", "method"):
         for source in (engine / folder).rglob("*.py"):
             target = payload / "Rec-RIR" / source.relative_to(engine)
@@ -139,7 +148,8 @@ def prepare(project: Path, api_source: Path, api_repo: Path, engine: Path | None
         "mimetic_version": "1.5.0", "pt_api_version": "1.6.3",
         "pt_api_commit": "c31147bf427e763f7be900e6077368b615d47e24",
         "recrir_commit": REVISION,
-        "local_changes": ["mimetic/engines/recrir/adapter.py: paths, launcher and process cleanup only"],
+        "local_changes": ["mimetic/engines/recrir/adapter.py: paths, launcher and process cleanup only",
+                          "mimetic/engines/recrir/worker.py: portable CPU autotuning only"],
         "original_mimetic_sha256": original,
         "files": {p.relative_to(payload).as_posix(): sha(p) for p in sorted(payload.rglob("*"))
                   if p.is_file() and p.name != "snapshot.json" and "__pycache__" not in p.parts},

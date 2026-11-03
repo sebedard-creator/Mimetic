@@ -296,7 +296,9 @@ class MimeticDelegate(NSObject, protocols=[objc.protocolNamed("NSApplicationDele
             self.output = Path(self.ready["path"])
             self.progress.setDoubleValue_(1)
             self.reveal.setEnabled_(True)
-            self.status.setStringValue_(f"Terminé · {self.ready['total']} ADR traités")
+            elapsed = round(self.ready.get("elapsed_seconds", 0))
+            duration = f"{elapsed // 60} min {elapsed % 60:02d} s" if elapsed >= 60 else f"{elapsed} s"
+            self.status.setStringValue_(f"Terminé · {self.ready['total']} ADR · {duration}")
             warnings = len(self.ready.get("warnings", []))
             text = self.output.name
             if warnings:

@@ -48,7 +48,7 @@ def verify(output, fixture):
     report = json.loads((session_path.parent / "Mimetic_report.json").read_text(encoding="utf-8"))
     assert report["units"][0]["eq_status"] == "identity_fallback"
     assert report["units"][0]["destination"]["length_samples"] == 4800
-    assert report["portable"]["version"].startswith("1.5.0")
+    assert report["portable"]["version"] == "1.5.1"
 
 
 def test_short_adr_exact_tail_metadata_and_unicode_filename(tmp_path, no_eq):

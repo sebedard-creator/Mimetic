@@ -1,13 +1,15 @@
 # Mimetic pour Mac Intel
 
 Application autonome pour **Mac Intel sous macOS 12.7.6 Monterey**, Mimetic
-**1.5**, build **1506**. Elle transforme une séquence Pro Tools en ZIP en un
+**1.5.1**, build **1508**. Elle transforme une séquence Pro Tools en ZIP en un
 ZIP contenant les rendus IR/MIX dans un PTX. Aucun Python, Git, compilateur
 ou Pro Tools n'est nécessaire pour calculer le résultat.
 
 Le lancement du build 1504 est confirmé sur Monterey. Le build 1505 a ajouté
 la sortie dans Téléchargements; le build 1506 sépare les modules AppKit du
-worker Python et prépare la distribution dans le dépôt. Windows ne permet
+worker Python. Le build 1507 ajuste le nombre de threads CPU et réutilise les
+calculs fixes du moteur, sans changer le modèle ni les paramètres audio.
+Le build 1508 reprend ces optimisations avec la version interne 1.5.1. Windows ne permet
 pas d'exécuter l'interface Mac de cette révision.
 
 ## Télécharger et lancer
@@ -83,6 +85,11 @@ Les journaux sont dans `~/Library/Logs/Mimetic` : `app.log` pour le démarrage,
 `job-<identifiant>.log` par traitement et `engine.log` pour l'inférence.
 Le bouton **Voir le journal** ouvre le journal courant.
 
+Au premier traitement, une courte calibration choisit le nombre de threads
+CPU pour ce Mac. Le réglage est conservé dans `~/Library/Caches/Mimetic`;
+aucun audio n'y est stocké. Les traitements suivants réutilisent ce réglage.
+La fenêtre indique la durée totale et le rapport inclut les temps des étapes.
+
 ## Organisation des sources
 
 ```text
@@ -104,8 +111,8 @@ macos-portable/
 ```
 
 Le cœur audio n'est pas maintenu en double : `tools/prepare_snapshot.py` le
-copie depuis `../src/mimetic` au moment de l'assemblage et adapte uniquement
-les chemins, le lancement et la fermeture du processus d'inférence. Les poids
+copie depuis `../src/mimetic` au moment de l'assemblage et adapte les chemins,
+le lancement, la fermeture et le réglage CPU du processus d'inférence. Les poids
 Rec-RIR, pt_api **1.6.3** et leurs licences sont récupérés à des révisions
 épinglées, puis inclus dans l'app. Template PTX et WAV silencieux proviennent
 des ressources du cœur. Aucun média de production n'est versionné.

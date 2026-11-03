@@ -58,7 +58,7 @@ def package(destination: Path):
               "code_pages_checked": assembly["verified_code_pages"],
               "resource_hashes_checked": assembly["verified_resource_hashes"],
               "signature": "ad hoc; native Apple signing needed on the target Mac",
-              "native_validation": "build 1504 startup confirmed on Intel Monterey; current build needs target validation"}
+              "native_validation": "build 1507 processing confirmed on Intel Monterey; build 1508 updates version metadata; full native regression pending"}
     if destination.resolve() == (ROOT / "releases").resolve():
         (destination / "release.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2))
